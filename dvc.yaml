@@ -25,3 +25,32 @@ stages:
     - data/interim/test_master.json
     - data/interim/train_master.json
     - data/interim/val_master.json
+  convert_detection:
+    cmd: python src/data/coco_to_yolo.py --task detection --input data/interim 
+      --output data/processed/detection --category-id 1 --category-name 
+      container_door --config params.yaml
+    deps:
+    - data/interim/test_master.json
+    - data/interim/train_master.json
+    - data/interim/val_master.json
+    - src/data/coco_to_yolo.py
+    params:
+    - detection.category_id
+    - detection.category_name
+    outs:
+    - data/processed/detection
+  convert_localization:
+    cmd: python src/data/coco_to_yolo.py --task pose --input data/interim 
+      --output data/processed/localization --category-id 2 --category-name 
+      container_id --config params.yaml
+    deps:
+    - data/interim/test_master.json
+    - data/interim/train_master.json
+    - data/interim/val_master.json
+    - src/data/coco_to_yolo.py
+    params:
+    - localization.category_id
+    - localization.category_name
+    - localization.num_keypoints
+    outs:
+    - data/processed/localization

@@ -66,3 +66,66 @@ stages:
       hash: md5
       md5: 2229a1f562f7a437fab112ed3151a5c2
       size: 108193
+  convert_detection:
+    cmd: python src/data/coco_to_yolo.py --task detection --input data/interim 
+      --output data/processed/detection --category-id 1 --category-name 
+      container_door --config params.yaml
+    deps:
+    - path: data/interim/test_master.json
+      hash: md5
+      md5: 1b3bebd09f02247b906eebe5ec28c7f2
+      size: 111222
+    - path: data/interim/train_master.json
+      hash: md5
+      md5: 9dc3da510e3bb7c38dec88e83b4d8de1
+      size: 501508
+    - path: data/interim/val_master.json
+      hash: md5
+      md5: 2229a1f562f7a437fab112ed3151a5c2
+      size: 108193
+    - path: src/data/coco_to_yolo.py
+      hash: md5
+      md5: e7f8498cd7607be994209a087a97cf21
+      size: 14610
+    params:
+      params.yaml:
+        detection.category_id: 1
+        detection.category_name: container_door
+    outs:
+    - path: data/processed/detection
+      hash: md5
+      md5: 91b20250d3ea6dd41cca724079718820.dir
+      size: 111035997
+      nfiles: 1005
+  convert_localization:
+    cmd: python src/data/coco_to_yolo.py --task pose --input data/interim 
+      --output data/processed/localization --category-id 2 --category-name 
+      container_id --config params.yaml
+    deps:
+    - path: data/interim/test_master.json
+      hash: md5
+      md5: 1b3bebd09f02247b906eebe5ec28c7f2
+      size: 111222
+    - path: data/interim/train_master.json
+      hash: md5
+      md5: 9dc3da510e3bb7c38dec88e83b4d8de1
+      size: 501508
+    - path: data/interim/val_master.json
+      hash: md5
+      md5: 2229a1f562f7a437fab112ed3151a5c2
+      size: 108193
+    - path: src/data/coco_to_yolo.py
+      hash: md5
+      md5: e7f8498cd7607be994209a087a97cf21
+      size: 14610
+    params:
+      params.yaml:
+        localization.category_id: 2
+        localization.category_name: container_id
+        localization.num_keypoints: 4
+    outs:
+    - path: data/processed/localization
+      hash: md5
+      md5: 3e0429a06505f3109c19597c7fa19770.dir
+      size: 108481332
+      nfiles: 979
