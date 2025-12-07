@@ -68,26 +68,26 @@ class COCOToYOLOConverter:
         
         return x_center_norm, y_center_norm, w_norm, h_norm
     
-    def coco_keypoints_to_yolo_bbox(
+    def polygon_to_yolo_bbox(
         self,
-        keypoints: List[float],
+        polygon: List[float],
         img_width: int,
         img_height: int
     ) -> Tuple[float, float, float, float]:
         """
-        Convert COCO keypoints to YOLO bbox (enclosing the keypoints).
+        Convert COCO polygon (segmentation) to YOLO bbox (enclosing the polygon).
         
         Args:
-            keypoints: COCO format keypoints [x1, y1, v1, x2, y2, v2, ...]
+            polygon: COCO format polygon [x1, y1, x2, y2, x3, y3, x4, y4]
             img_width: Image width
             img_height: Image height
             
         Returns:
             Tuple of (x_center_norm, y_center_norm, width_norm, height_norm)
         """
-        # Extract x, y coordinates (skip visibility flags)
-        xs = [keypoints[i] for i in range(0, len(keypoints), 3)]
-        ys = [keypoints[i+1] for i in range(0, len(keypoints), 3)]
+        # Extract x, y coordinates (alternating x, y)
+        xs = [polygon[i] for i in range(0, len(polygon), 2)]
+        ys = [polygon[i+1] for i in range(0, len(polygon), 2)]
         
         # Calculate bounding box
         x_min, x_max = min(xs), max(xs)
@@ -99,26 +99,30 @@ class COCOToYOLOConverter:
         # Convert to YOLO format
         return self.coco_bbox_to_yolo([x_min, y_min, w, h], img_width, img_height)
     
-    def coco_keypoints_to_yolo_pose(
+    def polygon_to_yolo_pose(
         self,
-        keypoints: List[float],
+        polygon: List[float],
         img_width: int,
         img_height: int
     ) -> List[float]:
         """
-        Convert COCO keypoints to YOLO pose format.
+        Convert COCO polygon (segmentation) to YOLO pose format.
+        
+        For container ID localization, the polygon represents 4 corner points
+        in format [x1, y1, x2, y2, x3, y3, x4, y4].
         
         Args:
-            keypoints: COCO format [x1, y1, v1, x2, y2, v2, ...]
+            polygon: COCO format polygon [x1, y1, x2, y2, x3, y3, x4, y4]
             img_width: Image width
             img_height: Image height
             
         Returns:
-            List of normalized keypoints [x1_norm, y1_norm, v1, x2_norm, y2_norm, v2, ...]
+            List of normalized keypoints [x1_norm, y1_norm, 2, x2_norm, y2_norm, 2, ...]
+            where visibility is always 2 (visible)
         """
         normalized_kpts = []
-        for i in range(0, len(keypoints), 3):
-            x, y, v = keypoints[i], keypoints[i+1], keypoints[i+2]
+        for i in range(0, len(polygon), 2):
+            x, y = polygon[i], polygon[i+1]
             x_norm = x / img_width
             y_norm = y / img_height
             
@@ -126,8 +130,8 @@ class COCOToYOLOConverter:
             x_norm = max(0, min(1, x_norm))
             y_norm = max(0, min(1, y_norm))
             
-            # YOLO pose uses 2 for visible (COCO uses 1 or 2)
-            v_yolo = 2 if v > 0 else 0
+            # YOLO pose visibility: 2 = visible (all polygon points are visible)
+            v_yolo = 2
             
             normalized_kpts.extend([x_norm, y_norm, v_yolo])
         
@@ -137,9 +141,12 @@ class COCOToYOLOConverter:
         """
         Check if image should be filtered based on task-specific rules.
         
-        Per spec (Module 3):
+        Per spec (Module 3 - Container ID Localization):
         - TRAIN split: Filter out 'unreadable' samples (exclude from training)
-        - TEST split: Keep ALL samples (to evaluate model on hard cases)
+        - TEST/VAL split: Keep ALL samples (to evaluate model on hard cases)
+        
+        Note: Images without container_id annotations will be naturally filtered
+        out by the annotation grouping logic (img_id_to_anns), not here.
         
         Args:
             image: Image dictionary from master JSON
@@ -151,8 +158,8 @@ class COCOToYOLOConverter:
         if self.task == 'pose' and split == 'train':
             # Filter unreadable samples from training set for localization task
             # The ocr_feasibility field is aggregated to image level by stratification module
-            ocr_feasibility = image.get('ocr_feasibility', 'unknown')
-            if ocr_feasibility in ['unreadable', 'unknown']:
+            ocr_feasibility = image.get('ocr_feasibility', 'readable')
+            if ocr_feasibility == 'unreadable':
                 return True
         
         return False
@@ -242,15 +249,19 @@ class COCOToYOLOConverter:
                     
                     elif self.task == 'pose':
                         # Pose format: class x_center y_center width height kpt1_x kpt1_y kpt1_v ...
-                        if 'keypoints' in ann:
-                            # Calculate bbox from keypoints
-                            x_c, y_c, w, h = self.coco_keypoints_to_yolo_bbox(
-                                ann['keypoints'], img_width, img_height
+                        # Container ID annotations use 'segmentation' field for 4-corner polygon
+                        if 'segmentation' in ann and ann['segmentation']:
+                            # Get the polygon (first element if multiple polygons)
+                            polygon = ann['segmentation'][0] if isinstance(ann['segmentation'], list) else ann['segmentation']
+                            
+                            # Calculate bbox from polygon
+                            x_c, y_c, w, h = self.polygon_to_yolo_bbox(
+                                polygon, img_width, img_height
                             )
                             
-                            # Convert keypoints
-                            kpts_normalized = self.coco_keypoints_to_yolo_pose(
-                                ann['keypoints'], img_width, img_height
+                            # Convert polygon to keypoints
+                            kpts_normalized = self.polygon_to_yolo_pose(
+                                polygon, img_width, img_height
                             )
                             
                             # Write line
