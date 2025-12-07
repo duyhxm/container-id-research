@@ -1,0 +1,27 @@
+stages:
+  split_data:
+    cmd: python src/data/stratification.py --config params.yaml 
+      --annotation-path data/annotations/annotations-coco-1.0.json --output-dir 
+      data/interim
+    deps:
+    - data/annotations/annotations-coco-1.0.json
+    - src/data/augmentation.py
+    - src/data/stratification.py
+    params:
+    - augmentation.motion_blur
+    - augmentation.prefix
+    - augmentation.random_brightness_contrast
+    - augmentation.shift_scale_rotate
+    - augmentation.strategies
+    - split.min_instances
+    - split.seed
+    - split.test_ratio
+    - split.train_ratio
+    - split.val_ratio
+    - stratification.r_env
+    - stratification.r_geo
+    outs:
+    - data/interim/augmented_images
+    - data/interim/test_master.json
+    - data/interim/train_master.json
+    - data/interim/val_master.json

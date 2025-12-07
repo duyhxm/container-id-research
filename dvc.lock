@@ -1,0 +1,68 @@
+schema: '2.0'
+stages:
+  split_data:
+    cmd: python src/data/stratification.py --config params.yaml 
+      --annotation-path data/annotations/annotations-coco-1.0.json --output-dir 
+      data/interim
+    deps:
+    - path: data/annotations/annotations-coco-1.0.json
+      hash: md5
+      md5: 1f33a4b946d011e3d2375268f8c4b5bd
+      size: 384509
+    - path: src/data/augmentation.py
+      hash: md5
+      md5: 3e520471b6e517f65a6b4ca8ee9f08c6
+      size: 10822
+    - path: src/data/stratification.py
+      hash: md5
+      md5: 7414b290f761e53043ffcd786f483b3e
+      size: 24554
+    params:
+      params.yaml:
+        augmentation.motion_blur:
+          blur_limit: 3
+          p: 0.3
+        augmentation.prefix: aug_
+        augmentation.random_brightness_contrast:
+          brightness_limit: 0.1
+          contrast_limit: 0.1
+          p: 0.5
+        augmentation.shift_scale_rotate:
+          shift_limit: 0.05
+          scale_limit: 0.1
+          rotate_limit: 5
+          p: 0.7
+        augmentation.strategies:
+        - shift_scale_rotate
+        - random_brightness_contrast
+        - motion_blur
+        split.min_instances: 2
+        split.seed: 42
+        split.test_ratio: 0.15
+        split.train_ratio: 0.7
+        split.val_ratio: 0.15
+        stratification.r_env:
+        - bad_light
+        - occluded
+        - not_clean
+        stratification.r_geo:
+        - frontal
+        - blurry
+    outs:
+    - path: data/interim/augmented_images
+      hash: md5
+      md5: 9eecfb65c4c6ed769f5d1e892ea79a3b.dir
+      size: 710664
+      nfiles: 2
+    - path: data/interim/test_master.json
+      hash: md5
+      md5: 1b3bebd09f02247b906eebe5ec28c7f2
+      size: 111222
+    - path: data/interim/train_master.json
+      hash: md5
+      md5: 9dc3da510e3bb7c38dec88e83b4d8de1
+      size: 501508
+    - path: data/interim/val_master.json
+      hash: md5
+      md5: 2229a1f562f7a437fab112ed3151a5c2
+      size: 108193
