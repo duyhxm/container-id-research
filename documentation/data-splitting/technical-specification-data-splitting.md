@@ -90,11 +90,15 @@ Với mỗi ảnh trong JSON, áp dụng hàm ánh xạ $\Phi$ để tạo trư�
 *   Nếu nhóm nào chỉ có **1 mẫu (Singleton)**:
     1.  Đánh dấu mẫu gốc này thuộc tập **TEST** (để kiểm thử thực tế).
     2.  Thực hiện **Augmentation** (Sử dụng `albumentations`):
-        *   Action: `HorizontalFlip` hoặc `RandomBrightnessContrast` (nhẹ).
+        *   Action: Các phép biến đổi bảo toàn ngữ nghĩa văn bản:
+            *   `RandomBrightnessContrast` (nhẹ) - Thay đổi độ sáng/tương phản
+            *   `Rotate` (±5°) - Xoay góc nhỏ
+            *   `ShiftScaleRotate` (nhẹ) - Kéo dãn/dịch chuyển nhỏ
+            *   **LƯU Ý:** `HorizontalFlip` bị nghiêm cấm vì đảo ngược trật tự ký tự trong Container ID.
         *   Naming Convention: Tên file mới = `aug_{original_filename}`.
         *   Save Image: Lưu ảnh mới vào `data/interim/augmented_images/`.
         *   JSON Entry Update: Tạo entry mới cho ảnh này. Thiết lập `rel_path` = `data/interim/augmented_images/{aug_filename}`.
-        *   Create Annotation: Tạo entry mới trong JSON cho ảnh này, sao chép annotations từ ảnh gốc (nhớ lật tọa độ bbox/polygon nếu flip ảnh).
+        *   Create Annotation: Tạo entry mới trong JSON cho ảnh này, sao chép annotations từ ảnh gốc và áp dụng phép biến đổi tương ứng lên tọa độ bbox/polygon.
         *   Assignment: Gán mẫu nhân bản này vào tập **TRAIN**.
 
 **Bước 4: Chia tập (Splitting)**
