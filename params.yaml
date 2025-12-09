@@ -84,7 +84,7 @@ detection:
   
   # Model configuration
   model:
-    architecture: yolov11s  # YOLOv11-Small (~45 MB, optimal for research)
+    architecture: yolo11s  # YOLOv11-Small (~45 MB, optimal for research)
     pretrained: true
     
   # Training hyperparameters (Research-grade configuration)
@@ -131,7 +131,7 @@ detection:
     tags:
       - module1
       - detection
-      - yolov11s
+      - yolo11s
       - research
       - t4x2
 
@@ -182,7 +182,7 @@ localization:
   
   # Model configuration
   model:
-    architecture: yolov11n-pose
+    architecture: yolo11n-pose
     pretrained: true
     
   # Training hyperparameters

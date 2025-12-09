@@ -240,7 +240,7 @@ def train_detection_model(
         logger.info("Possible causes:")
         logger.info("  1. Network connection issue preventing download")
         logger.info(
-            "  2. Invalid model name (available: yolov11n, yolov11s, yolov11m, yolov11l, yolov11x)"
+            "  2. Invalid model name (available: yolo11n, yolo11s, yolo11m, yolo11l, yolo11x)"
         )
         logger.info("  3. Corrupted cache (~/.cache/ultralytics)")
         raise

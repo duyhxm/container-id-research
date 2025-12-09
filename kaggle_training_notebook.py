@@ -418,7 +418,7 @@ try:
     print("   This may take 1-2 minutes on first run")
 
     # Initialize model to trigger auto-download
-    temp_model = YOLO("yolov11s.pt")
+    temp_model = YOLO("yolo11s.pt")
 
     print("✓ Pretrained weights downloaded successfully")
     print(f"   Cached at: ~/.cache/ultralytics/")
