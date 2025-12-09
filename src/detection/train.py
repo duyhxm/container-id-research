@@ -105,21 +105,22 @@ def prepare_training_args(config: Dict[str, Any], data_yaml: str) -> Dict[str, A
 
     # Load hardware configuration for multi-GPU support
     from pathlib import Path as ConfigPath
+
     import yaml as config_yaml
-    
+
     try:
         with open(ConfigPath("params.yaml"), "r") as f:
             full_params = config_yaml.safe_load(f)
         hardware_cfg = full_params.get("hardware", {})
     except Exception:
         hardware_cfg = {}
-    
+
     # Determine device configuration
     if hardware_cfg.get("multi_gpu", False):
         device = hardware_cfg.get("gpu_ids", [0, 1])  # Multi-GPU: list of GPU IDs
     else:
         device = 0  # Single GPU
-    
+
     args = {
         # Data
         "data": data_yaml,
@@ -224,8 +225,14 @@ def train_detection_model(
 
     # Initialize model
     logger.info("Initializing model...")
-    model = YOLO(f"{model_name}.pt")
-    logger.info(f"Loaded pretrained weights: {model_name}.pt")
+    logger.info(
+        f"Loading {model_name} (pretrained weights will auto-download if needed)..."
+    )
+
+    # Use model name directly - Ultralytics handles .pt extension and auto-download
+    # e.g., YOLO("yolov11s") will download yolov11s.pt from Ultralytics hub if not cached
+    model = YOLO(model_name)
+    logger.info(f"✓ Model loaded: {model_name}")
 
     # Prepare training arguments
     logger.info("Preparing training configuration...")
@@ -347,4 +354,5 @@ def main():
 
 
 if __name__ == "__main__":
+    main()
     main()

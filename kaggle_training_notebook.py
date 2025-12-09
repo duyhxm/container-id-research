@@ -412,11 +412,13 @@ print("=" * 70)
 print("⏱️  Training will take approximately 3-4 hours")
 print("📊 Monitor progress at: https://wandb.ai")
 print("🔄 This cell will run until training completes")
+print("📥 YOLOv11s pretrained weights will auto-download (~45 MB)")
 print("=" * 70)
 print()
 
 # Add project root to Python path (required for src.* imports)
 import sys
+
 project_root = os.getcwd()
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
