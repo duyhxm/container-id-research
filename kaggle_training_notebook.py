@@ -17,9 +17,9 @@ Prerequisites:
 Time: ~3-4 hours
 """
 
+import base64
 import os
 import sys
-import base64
 
 print("=" * 70)
 print(" CONTAINER DOOR DETECTION TRAINING - Module 1")
@@ -156,7 +156,7 @@ print("\n[4/8] Configuring DVC credentials...")
 try:
     # Import Kaggle Secrets API (correct way to access secrets)
     from kaggle_secrets import UserSecretsClient
-    
+
     user_secrets = UserSecretsClient()
     dvc_json = None
 
@@ -164,7 +164,9 @@ try:
     try:
         dvc_json = user_secrets.get_secret("DVC_SERVICE_ACCOUNT_JSON")
         if dvc_json:
-            print(f"✓ Found DVC_SERVICE_ACCOUNT_JSON from Kaggle Secrets: {len(dvc_json)} characters")
+            print(
+                f"✓ Found DVC_SERVICE_ACCOUNT_JSON from Kaggle Secrets: {len(dvc_json)} characters"
+            )
     except Exception as e:
         print(f"⚠️  Kaggle Secrets API error: {e}")
 
@@ -179,7 +181,7 @@ try:
         dvc_json_b64 = os.environ.get("DVC_SERVICE_ACCOUNT_JSON_B64", "")
         if not dvc_json_b64:
             dvc_json_b64 = os.environ.get("KAGGLE_SECRET_DVC_JSON_B64", "")
-        
+
         if dvc_json_b64:
             print("✓ Found base64-encoded DVC credentials")
             dvc_json = base64.b64decode(dvc_json_b64).decode("utf-8")
@@ -196,7 +198,7 @@ try:
         print("   6. Toggle ON the secret for this notebook")
         print("   7. Restart kernel (Session → Restart Session)")
         print("   8. Re-run this cell")
-        print("\n💡 Tip: Your JSON should start with: {\"type\":\"service_account\",...")
+        print('\n💡 Tip: Your JSON should start with: {"type":"service_account",...')
         sys.exit(1)
 
     # Write to file with secure permissions
@@ -217,6 +219,7 @@ try:
 except Exception as e:
     print(f"❌ Error configuring DVC: {e}")
     import traceback
+
     traceback.print_exc()
     sys.exit(1)
 
@@ -228,7 +231,7 @@ print("\n[5/8] Configuring WandB...")
 try:
     # Import Kaggle Secrets API
     from kaggle_secrets import UserSecretsClient
-    
+
     user_secrets = UserSecretsClient()
     wandb_key = None
 
@@ -236,7 +239,9 @@ try:
     try:
         wandb_key = user_secrets.get_secret("WANDB_API_KEY")
         if wandb_key:
-            print(f"✓ Found WANDB_API_KEY from Kaggle Secrets: {len(wandb_key)} characters")
+            print(
+                f"✓ Found WANDB_API_KEY from Kaggle Secrets: {len(wandb_key)} characters"
+            )
     except Exception as e:
         print(f"⚠️  Kaggle Secrets API error: {e}")
 
@@ -295,15 +300,17 @@ if not os.path.exists(f"{dataset_path}/images/train"):
     print("\nDataset not found locally. Fetching from DVC pipeline...")
     print("⏱️  This may take 2-5 minutes depending on dataset size...")
     print("=" * 70)
-    
+
     # Pull all pipeline outputs (dataset is managed by pipeline, not standalone .dvc file)
     print("\nAttempting: dvc pull (pipeline outputs)...")
     ret = os.system("dvc pull")
-    
+
     if ret != 0:
         print("\n❌ DVC pull failed!")
         print("\n🔍 Troubleshooting:")
-        print("   Dataset is managed by DVC pipeline (dvc.yaml), not standalone .dvc file")
+        print(
+            "   Dataset is managed by DVC pipeline (dvc.yaml), not standalone .dvc file"
+        )
         print("")
         print("   1. Check if pipeline outputs were pushed to Google Drive:")
         print("      Run on LOCAL machine:")
@@ -324,7 +331,7 @@ if not os.path.exists(f"{dataset_path}/images/train"):
         print("   5. Verify dvc.lock has hash for data/processed/detection")
         print("      $ grep 'data/processed/detection' dvc.lock")
         sys.exit(1)
-    
+
     print("\n✓ Dataset fetched successfully from DVC")
 else:
     print("✓ Dataset already exists locally")
@@ -340,7 +347,13 @@ required_dirs = [
 
 for dir_path in required_dirs:
     if os.path.exists(dir_path):
-        file_count = len([f for f in os.listdir(dir_path) if os.path.isfile(os.path.join(dir_path, f))])
+        file_count = len(
+            [
+                f
+                for f in os.listdir(dir_path)
+                if os.path.isfile(os.path.join(dir_path, f))
+            ]
+        )
         print(f"  ✓ {dir_path}: {file_count} files")
     else:
         print(f"  ❌ {dir_path}: NOT FOUND")
@@ -402,11 +415,19 @@ print("🔄 This cell will run until training completes")
 print("=" * 70)
 print()
 
+# Add project root to Python path (required for src.* imports)
+import sys
+project_root = os.getcwd()
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+    print(f"✓ Added project root to Python path: {project_root}")
+
 # Run training script
 experiment_name = "detection_exp001_yolo11s_baseline"
 
+print("\nStarting training script...")
 ret_code = os.system(
-    f"python src/detection/train.py "
+    f"PYTHONPATH={project_root}:$PYTHONPATH python src/detection/train.py "
     f"--config params.yaml "
     f"--experiment {experiment_name}"
 )
