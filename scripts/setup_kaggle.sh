@@ -1,10 +1,15 @@
 #!/bin/bash
-# Kaggle Environment Setup Script (SSH Workflow)
+# ⚠️  DEPRECATED: SSH Tunnel Method No Longer Supported (as of Dec 2024)
+# ⚠️  Reason: GPU driver incompatibility, environment complexity
+# ⚠️  Use Instead: kaggle_training_notebook.py (direct notebook workflow)
+# ⚠️  See: documentation/modules/module-1-detection/kaggle-training-workflow.md
+#
+# Kaggle Environment Setup Script (SSH Workflow - LEGACY)
 # Reads secrets from environment variables set by tunnel notebook
 # Installs dependencies and configures DVC + WandB
 #
 # Usage: bash scripts/setup_kaggle.sh
-# Context: Run inside SSH session on Kaggle VM
+# Context: Run inside SSH session on Kaggle VM (NOT RECOMMENDED)
 
 set -e  # Exit on error
 set -u  # Exit on undefined variable
@@ -103,7 +108,11 @@ echo "✓ Setup Complete!                        "
 echo "=========================================="
 echo ""
 echo "Next steps:"
-echo "  1. Run: dvc pull data/processed/detection.dvc"
-echo "  2. Run: bash scripts/run_training.sh"
+echo "  1. Run: dvc pull data/raw.dvc"
+echo "  2. Run: dvc fetch && dvc checkout"
+echo "  3. Run: python src/utils/validate_dataset.py --path data/processed/detection"
+echo "  4. Run: bash scripts/run_training.sh"
+echo ""
+echo "Note: Pipeline outputs are stored in DVC cache, not as separate .dvc files"
 echo ""
 

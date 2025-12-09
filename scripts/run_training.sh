@@ -21,7 +21,19 @@ echo ""
 
 # Phase 2: Data
 echo "[2/5] Pulling dataset from DVC..."
-dvc pull data/processed/detection.dvc
+
+# Check if data already exists (from previous runs in same session)
+if [ ! -d "data/processed/detection/images" ]; then
+    echo "Fetching pipeline outputs from DVC cache..."
+    # Pull raw data if needed
+    if [ ! -d "data/raw" ]; then
+        dvc pull data/raw.dvc
+    fi
+    # Fetch and checkout pipeline outputs
+    dvc fetch && dvc checkout
+else
+    echo "Dataset already exists, skipping fetch..."
+fi
 
 # Validate dataset
 python src/utils/validate_dataset.py --path data/processed/detection
