@@ -86,11 +86,16 @@ def prepare_training_args(config: Dict[str, Any], data_yaml: str) -> Dict[str, A
 
     Args:
         config: Detection configuration
-        data_yaml: Path to data.yaml file
+        data_yaml: Path to data.yaml file (will be converted to absolute path)
 
     Returns:
         Dictionary of training arguments
     """
+    from pathlib import Path
+    
+    # Convert data_yaml to absolute path to avoid path resolution issues
+    # Ultralytics resolves paths relative to working directory, so absolute path is safest
+    data_yaml_abs = str(Path(data_yaml).absolute())
     model_cfg = config.get("model", {})
     train_cfg = config.get("training", {})
     aug_cfg = config.get("augmentation", {})
@@ -123,7 +128,7 @@ def prepare_training_args(config: Dict[str, Any], data_yaml: str) -> Dict[str, A
 
     args = {
         # Data
-        "data": data_yaml,
+        "data": data_yaml_abs,  # Use absolute path
         # Training
         "epochs": train_cfg.get("epochs", 100),
         "batch": train_cfg.get("batch_size", 16),

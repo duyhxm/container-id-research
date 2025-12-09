@@ -285,11 +285,20 @@ class COCOToYOLOConverter:
             category_name: Name of the category
             num_keypoints: Number of keypoints (for pose task)
         """
-        # Use '.' for path to make it portable across platforms
-        # This makes train/val/test paths relative to data.yaml location
+        # Use relative path from project root for portability
+        # When data.yaml is at data/processed/detection/data.yaml,
+        # and called from project root, paths should be relative to data.yaml location
         # Reference: https://docs.ultralytics.com/datasets/detect/
+        
+        # Get relative path from project root to output_dir
+        try:
+            rel_path = output_dir.relative_to(Path.cwd())
+        except ValueError:
+            # If output_dir is not relative to cwd, use absolute path
+            rel_path = output_dir.absolute()
+        
         data_yaml = {
-            "path": ".",  # Current directory (data.yaml location)
+            "path": str(rel_path),  # Relative path from project root
             "train": "images/train",
             "val": "images/val",
             "test": "images/test",
