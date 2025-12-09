@@ -226,13 +226,22 @@ def train_detection_model(
     # Initialize model
     logger.info("Initializing model...")
     logger.info(
-        f"Loading {model_name} (pretrained weights will auto-download if needed)..."
+        f"Loading {model_name}.pt (pretrained weights will auto-download if needed)..."
     )
 
-    # Use model name directly - Ultralytics handles .pt extension and auto-download
-    # e.g., YOLO("yolov11s") will download yolov11s.pt from Ultralytics hub if not cached
-    model = YOLO(model_name)
-    logger.info(f"✓ Model loaded: {model_name}")
+    # YOLO() will auto-download pretrained weights from Ultralytics GitHub releases
+    # if not found in local cache (~/.cache/ultralytics or current directory)
+    # Explicitly use .pt extension as per official Ultralytics documentation
+    try:
+        model = YOLO(f"{model_name}.pt")
+        logger.info(f"✓ Model loaded successfully: {model_name}.pt")
+    except Exception as e:
+        logger.error(f"Failed to load model: {e}")
+        logger.info("Possible causes:")
+        logger.info("  1. Network connection issue preventing download")
+        logger.info("  2. Invalid model name (available: yolov11n, yolov11s, yolov11m, yolov11l, yolov11x)")
+        logger.info("  3. Corrupted cache (~/.cache/ultralytics)")
+        raise
 
     # Prepare training arguments
     logger.info("Preparing training configuration...")
@@ -354,5 +363,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
     main()

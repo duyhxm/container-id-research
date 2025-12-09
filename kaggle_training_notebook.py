@@ -405,6 +405,36 @@ print(f"\nEstimated time: ~{estimated_hours:.1f} hours on GPU T4 x2")
 print("-" * 70)
 
 # ============================================================================
+# Step 7.5: Download pretrained weights
+# ============================================================================
+print("\n[7.5/8] Downloading pretrained weights...")
+print("=" * 70)
+
+# Pre-download YOLOv11s weights to avoid issues during training
+from ultralytics import YOLO
+
+try:
+    print("📥 Downloading YOLOv11s pretrained weights (~45 MB)...")
+    print("   This may take 1-2 minutes on first run")
+    
+    # Initialize model to trigger auto-download
+    temp_model = YOLO("yolov11s.pt")
+    
+    print("✓ Pretrained weights downloaded successfully")
+    print(f"   Cached at: ~/.cache/ultralytics/")
+    del temp_model  # Free memory
+    
+except Exception as e:
+    print(f"❌ Failed to download pretrained weights: {e}")
+    print("\nPossible solutions:")
+    print("  1. Check Kaggle notebook has internet access enabled")
+    print("  2. Try restarting the kernel")
+    print("  3. Manually download from: https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11s.pt")
+    sys.exit(1)
+
+print("-" * 70)
+
+# ============================================================================
 # Step 8: Start training
 # ============================================================================
 print("\n[8/8] Starting training...")
@@ -412,13 +442,10 @@ print("=" * 70)
 print("⏱️  Training will take approximately 3-4 hours")
 print("📊 Monitor progress at: https://wandb.ai")
 print("🔄 This cell will run until training completes")
-print("📥 YOLOv11s pretrained weights will auto-download (~45 MB)")
 print("=" * 70)
 print()
 
 # Add project root to Python path (required for src.* imports)
-import sys
-
 project_root = os.getcwd()
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
