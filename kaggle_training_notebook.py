@@ -276,14 +276,14 @@ print("\n[6/8] Fetching dataset from DVC...")
 
 dataset_path = "data/processed/detection"
 
-# Check if .dvc tracking file exists
-if not os.path.exists(f"{dataset_path}.dvc"):
-    print(f"❌ DVC tracking file not found: {dataset_path}.dvc")
-    print("   This file should exist in the repository")
+# Check if dvc.lock exists (dataset is managed by DVC pipeline, not .dvc file)
+if not os.path.exists("dvc.lock"):
+    print("❌ dvc.lock not found!")
+    print("   This file tracks DVC pipeline outputs")
     print("   Check if git clone was successful")
     sys.exit(1)
 
-print(f"✓ Found DVC tracking file: {dataset_path}.dvc")
+print("✓ Found dvc.lock (dataset managed by DVC pipeline)")
 
 # Show DVC configuration
 print("\n[DEBUG] DVC Configuration:")
@@ -292,37 +292,37 @@ os.system("dvc config core.remote 2>&1 || echo 'No default remote set'")
 
 # Check if data exists locally
 if not os.path.exists(f"{dataset_path}/images/train"):
-    print("\nDataset not found locally. Fetching from DVC...")
+    print("\nDataset not found locally. Fetching from DVC pipeline...")
     print("⏱️  This may take 2-5 minutes depending on dataset size...")
     print("=" * 70)
     
-    # Try to pull data from DVC
-    print("\nAttempting: dvc pull...")
-    ret = os.system(f"dvc pull {dataset_path}.dvc")
+    # Pull all pipeline outputs (dataset is managed by pipeline, not standalone .dvc file)
+    print("\nAttempting: dvc pull (pipeline outputs)...")
+    ret = os.system("dvc pull")
     
     if ret != 0:
         print("\n❌ DVC pull failed!")
         print("\n🔍 Troubleshooting:")
-        print("   1. Check if dataset was pushed to Google Drive:")
+        print("   Dataset is managed by DVC pipeline (dvc.yaml), not standalone .dvc file")
+        print("")
+        print("   1. Check if pipeline outputs were pushed to Google Drive:")
         print("      Run on LOCAL machine:")
         print(f"      $ cd /path/to/container-id-research")
-        print(f"      $ dvc status")
-        print(f"      $ dvc push {dataset_path}.dvc")
+        print(f"      $ dvc status -c")
+        print(f"      $ dvc push")
         print("")
-        print("   2. Verify DVC remote is configured:")
+        print("   2. If pipeline was never run locally:")
+        print(f"      $ dvc repro convert_detection")
+        print(f"      $ dvc push")
+        print("")
+        print("   3. Verify DVC remote is configured:")
         print("      $ dvc remote list")
         print("")
-        print("   3. Check Google Drive folder permissions")
+        print("   4. Check Google Drive folder permissions")
         print("      - Service account email should have access")
         print("")
-        print("   4. Verify .dvc/config file exists in repository")
-        print("")
-        print("💡 Common fix: On local machine, run:")
-        print(f"   $ dvc add {dataset_path}")
-        print(f"   $ git add {dataset_path}.dvc .gitignore")
-        print(f"   $ git commit -m 'chore: track dataset with DVC'")
-        print(f"   $ dvc push {dataset_path}.dvc")
-        print(f"   $ git push")
+        print("   5. Verify dvc.lock has hash for data/processed/detection")
+        print("      $ grep 'data/processed/detection' dvc.lock")
         sys.exit(1)
     
     print("\n✓ Dataset fetched successfully from DVC")
