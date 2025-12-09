@@ -154,40 +154,52 @@ else:
 print("\n[4/8] Configuring DVC credentials...")
 
 try:
-    # Try to read from Kaggle secrets (support multiple formats)
+    # Import Kaggle Secrets API (correct way to access secrets)
+    from kaggle_secrets import UserSecretsClient
+    
+    user_secrets = UserSecretsClient()
     dvc_json = None
 
-    # Option 1: Plain text (directly from Kaggle Secrets)
-    dvc_json = os.environ.get("DVC_SERVICE_ACCOUNT_JSON", "")
-    if dvc_json:
-        print("✓ Found DVC_SERVICE_ACCOUNT_JSON (Kaggle Secrets)")
+    # Option 1: Direct from Kaggle Secrets API (PRIMARY METHOD)
+    try:
+        dvc_json = user_secrets.get_secret("DVC_SERVICE_ACCOUNT_JSON")
+        if dvc_json:
+            print(f"✓ Found DVC_SERVICE_ACCOUNT_JSON from Kaggle Secrets: {len(dvc_json)} characters")
+    except Exception as e:
+        print(f"⚠️  Kaggle Secrets API error: {e}")
 
-    # Option 2: Base64 encoded
+    # Option 2: Fallback - environment variable (for compatibility)
+    if not dvc_json:
+        dvc_json = os.environ.get("DVC_SERVICE_ACCOUNT_JSON", "")
+        if dvc_json:
+            print("✓ Found DVC_SERVICE_ACCOUNT_JSON (environment variable)")
+
+    # Option 3: Base64 encoded (legacy formats)
     if not dvc_json:
         dvc_json_b64 = os.environ.get("DVC_SERVICE_ACCOUNT_JSON_B64", "")
+        if not dvc_json_b64:
+            dvc_json_b64 = os.environ.get("KAGGLE_SECRET_DVC_JSON_B64", "")
+        
         if dvc_json_b64:
-            print("✓ Found DVC_SERVICE_ACCOUNT_JSON_B64")
-            dvc_json = base64.b64decode(dvc_json_b64).decode("utf-8")
-
-    # Option 3: KAGGLE_SECRET prefix (from SSH tunnel)
-    if not dvc_json:
-        dvc_json_b64 = os.environ.get("KAGGLE_SECRET_DVC_JSON_B64", "")
-        if dvc_json_b64:
-            print("✓ Found KAGGLE_SECRET_DVC_JSON_B64")
+            print("✓ Found base64-encoded DVC credentials")
             dvc_json = base64.b64decode(dvc_json_b64).decode("utf-8")
 
     # If none found, exit with instructions
     if not dvc_json:
-        print("❌ DVC credentials not found in environment")
-        print("\nTo fix:")
-        print("   1. Go to Settings → Add-ons → Secrets")
-        print("   2. Add secret with name: DVC_SERVICE_ACCOUNT_JSON")
-        print("   3. Value: Your Google Service Account JSON (raw JSON)")
-        print("   4. Enable the secret for this notebook")
-        print("   5. Restart kernel and re-run this cell")
+        print("❌ DVC credentials not found!")
+        print("\n📋 Setup Instructions:")
+        print("   1. Click 'Add-ons' (right sidebar) → 'Secrets'")
+        print("   2. Click '+ Add a new secret'")
+        print("   3. Label: DVC_SERVICE_ACCOUNT_JSON")
+        print("   4. Value: Paste your Google Service Account JSON (entire JSON)")
+        print("   5. Click 'Add'")
+        print("   6. Toggle ON the secret for this notebook")
+        print("   7. Restart kernel (Session → Restart Session)")
+        print("   8. Re-run this cell")
+        print("\n💡 Tip: Your JSON should start with: {\"type\":\"service_account\",...")
         sys.exit(1)
 
-    # Write to file
+    # Write to file with secure permissions
     with open("/tmp/dvc_service_account.json", "w") as f:
         f.write(dvc_json)
     os.chmod("/tmp/dvc_service_account.json", 0o600)
@@ -200,10 +212,12 @@ try:
         "dvc remote modify storage gdrive_service_account_json_file_path /tmp/dvc_service_account.json > /dev/null 2>&1"
     )
 
-    print("✓ DVC credentials configured")
+    print("✓ DVC credentials configured successfully")
 
 except Exception as e:
     print(f"❌ Error configuring DVC: {e}")
+    import traceback
+    traceback.print_exc()
     sys.exit(1)
 
 # ============================================================================
@@ -212,35 +226,48 @@ except Exception as e:
 print("\n[5/8] Configuring WandB...")
 
 try:
-    # Try to read WandB API key
+    # Import Kaggle Secrets API
+    from kaggle_secrets import UserSecretsClient
+    
+    user_secrets = UserSecretsClient()
     wandb_key = None
 
-    # Option 1: Direct from Kaggle Secrets
-    wandb_key = os.environ.get("WANDB_API_KEY", "")
-    if wandb_key:
-        print("✓ Found WANDB_API_KEY")
+    # Option 1: Direct from Kaggle Secrets API (PRIMARY METHOD)
+    try:
+        wandb_key = user_secrets.get_secret("WANDB_API_KEY")
+        if wandb_key:
+            print(f"✓ Found WANDB_API_KEY from Kaggle Secrets: {len(wandb_key)} characters")
+    except Exception as e:
+        print(f"⚠️  Kaggle Secrets API error: {e}")
 
-    # Option 2: Base64 encoded
+    # Option 2: Fallback - environment variable
+    if not wandb_key:
+        wandb_key = os.environ.get("WANDB_API_KEY", "")
+        if wandb_key:
+            print("✓ Found WANDB_API_KEY (environment variable)")
+
+    # Option 3: Base64 encoded (legacy)
     if not wandb_key:
         wandb_key_b64 = os.environ.get("KAGGLE_SECRET_WANDB_KEY_B64", "")
         if wandb_key_b64:
-            print("✓ Found KAGGLE_SECRET_WANDB_KEY_B64")
+            print("✓ Found base64-encoded WandB key")
             wandb_key = base64.b64decode(wandb_key_b64).decode("utf-8")
 
     if not wandb_key:
-        print(
-            "⚠️  WandB API key not found - training will continue but without WandB logging"
-        )
+        print("⚠️  WandB API key not found")
+        print("   Training will continue but WITHOUT WandB logging")
+        print("   To enable WandB: Add secret 'WANDB_API_KEY' in notebook settings")
     else:
         # Authenticate WandB
         ret = os.system(f"wandb login {wandb_key} > /dev/null 2>&1")
         if ret == 0:
-            print("✓ WandB authenticated")
+            print("✓ WandB authenticated successfully")
         else:
             print("⚠️  WandB authentication failed - continuing without logging")
 
 except Exception as e:
-    print(f"⚠️  WandB setup error: {e} - continuing without WandB")
+    print(f"⚠️  WandB setup error: {e}")
+    print("   Continuing without WandB logging...")
 
 # ============================================================================
 # Step 6: Fetch dataset from DVC
@@ -249,24 +276,89 @@ print("\n[6/8] Fetching dataset from DVC...")
 
 dataset_path = "data/processed/detection"
 
-if not os.path.exists(f"{dataset_path}/images/train"):
-    print("Dataset not found. Fetching from DVC (this may take 2-3 minutes)...")
-    ret = os.system("dvc fetch && dvc checkout")
-    if ret != 0:
-        print("❌ Failed to fetch dataset from DVC!")
-        print("Check DVC configuration and Google Drive permissions")
-        sys.exit(1)
-    print("✓ Dataset fetched successfully")
-else:
-    print("✓ Dataset already exists")
+# Check if .dvc tracking file exists
+if not os.path.exists(f"{dataset_path}.dvc"):
+    print(f"❌ DVC tracking file not found: {dataset_path}.dvc")
+    print("   This file should exist in the repository")
+    print("   Check if git clone was successful")
+    sys.exit(1)
 
-# Validate dataset
-print("\nValidating dataset...")
+print(f"✓ Found DVC tracking file: {dataset_path}.dvc")
+
+# Show DVC configuration
+print("\n[DEBUG] DVC Configuration:")
+os.system("dvc remote list")
+os.system("dvc config core.remote 2>&1 || echo 'No default remote set'")
+
+# Check if data exists locally
+if not os.path.exists(f"{dataset_path}/images/train"):
+    print("\nDataset not found locally. Fetching from DVC...")
+    print("⏱️  This may take 2-5 minutes depending on dataset size...")
+    print("=" * 70)
+    
+    # Try to pull data from DVC
+    print("\nAttempting: dvc pull...")
+    ret = os.system(f"dvc pull {dataset_path}.dvc")
+    
+    if ret != 0:
+        print("\n❌ DVC pull failed!")
+        print("\n🔍 Troubleshooting:")
+        print("   1. Check if dataset was pushed to Google Drive:")
+        print("      Run on LOCAL machine:")
+        print(f"      $ cd /path/to/container-id-research")
+        print(f"      $ dvc status")
+        print(f"      $ dvc push {dataset_path}.dvc")
+        print("")
+        print("   2. Verify DVC remote is configured:")
+        print("      $ dvc remote list")
+        print("")
+        print("   3. Check Google Drive folder permissions")
+        print("      - Service account email should have access")
+        print("")
+        print("   4. Verify .dvc/config file exists in repository")
+        print("")
+        print("💡 Common fix: On local machine, run:")
+        print(f"   $ dvc add {dataset_path}")
+        print(f"   $ git add {dataset_path}.dvc .gitignore")
+        print(f"   $ git commit -m 'chore: track dataset with DVC'")
+        print(f"   $ dvc push {dataset_path}.dvc")
+        print(f"   $ git push")
+        sys.exit(1)
+    
+    print("\n✓ Dataset fetched successfully from DVC")
+else:
+    print("✓ Dataset already exists locally")
+
+# Verify dataset structure
+print("\n[DEBUG] Verifying dataset structure...")
+required_dirs = [
+    f"{dataset_path}/images/train",
+    f"{dataset_path}/images/val",
+    f"{dataset_path}/labels/train",
+    f"{dataset_path}/labels/val",
+]
+
+for dir_path in required_dirs:
+    if os.path.exists(dir_path):
+        file_count = len([f for f in os.listdir(dir_path) if os.path.isfile(os.path.join(dir_path, f))])
+        print(f"  ✓ {dir_path}: {file_count} files")
+    else:
+        print(f"  ❌ {dir_path}: NOT FOUND")
+
+missing = [d for d in required_dirs if not os.path.exists(d)]
+if missing:
+    print(f"\n❌ Missing required directories: {missing}")
+    sys.exit(1)
+
+print("✓ Dataset structure verified")
+
+# Validate dataset with validation script
+print("\nValidating dataset format...")
 ret = os.system(f"python src/utils/validate_dataset.py --path {dataset_path}")
 
 if ret != 0:
     print("❌ Dataset validation failed!")
-    print("Check dataset structure and labels")
+    print("Check dataset structure and label format")
     sys.exit(1)
 
 print("✓ Dataset validated successfully")
