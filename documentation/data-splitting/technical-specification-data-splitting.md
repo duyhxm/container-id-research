@@ -142,8 +142,8 @@ Cả hai Adapter (Module 1 & 3) đều sử dụng chung một logic để copy 
 *   **Input:** `data/interim/{train,val,test}_master.json`
 *   **Filter Logic (Quan trọng):**
     *   Check `image.attributes['ocr_feasibility']`.
-    *   **IF** `split == 'train'` **AND** `ocr_feasibility == 'unreadable'` $\rightarrow$ **DROP** (Không xuất file label, model không học ảnh này).
-    *   **IF** `split == 'test'` $\rightarrow$ **KEEP** (Giữ lại để đánh giá khả năng model xử lý ca khó hoặc từ chối nhận diện).
+*   **IF** `split == 'train'` **AND** `ocr_feasibility` ∈ {`'unreadable'`, `'unknown'`} $\rightarrow$ **DROP** (Không xuất file label, model không học ảnh nhiễu).
+*   **IF** `split == 'test'` $\rightarrow$ **KEEP** (Giữ lại cả `unknown`/`unreadable` để đánh giá khả năng model xử lý ca khó hoặc từ chối nhận diện).
     *   Chỉ lấy annotation có `category_id == <ID_MA_SO_CONTAINER>`.
 *   **Conversion Logic (Keypoints):**
     *   Input: COCO Segmentation (Polygon 4 điểm).

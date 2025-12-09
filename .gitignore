@@ -373,6 +373,9 @@ temp/
 .vscode/
 *.code-workspace
 
+# Cursor
+.cursor/
+
 # PyCharm (additional to above)
 .idea/
 
