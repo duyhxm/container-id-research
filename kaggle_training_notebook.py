@@ -416,20 +416,22 @@ from ultralytics import YOLO
 try:
     print("📥 Downloading YOLOv11s pretrained weights (~45 MB)...")
     print("   This may take 1-2 minutes on first run")
-    
+
     # Initialize model to trigger auto-download
     temp_model = YOLO("yolov11s.pt")
-    
+
     print("✓ Pretrained weights downloaded successfully")
     print(f"   Cached at: ~/.cache/ultralytics/")
     del temp_model  # Free memory
-    
+
 except Exception as e:
     print(f"❌ Failed to download pretrained weights: {e}")
     print("\nPossible solutions:")
     print("  1. Check Kaggle notebook has internet access enabled")
     print("  2. Try restarting the kernel")
-    print("  3. Manually download from: https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11s.pt")
+    print(
+        "  3. Manually download from: https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11s.pt"
+    )
     sys.exit(1)
 
 print("-" * 70)
