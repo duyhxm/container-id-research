@@ -85,8 +85,8 @@ stages:
       size: 108193
     - path: src/data/coco_to_yolo.py
       hash: md5
-      md5: 9aa7fbc2b03eeda1886358b3a28eef52
-      size: 14303
+      md5: d3dc49b3e47f47819ff2c33de2f04152
+      size: 15047
     params:
       params.yaml:
         detection.category_id: 1
@@ -94,8 +94,8 @@ stages:
     outs:
     - path: data/processed/detection
       hash: md5
-      md5: 97bf4302882ff7994e4dc5f534cc0e32.dir
-      size: 111035949
+      md5: c7bd66afd69dc02f230b378792546c44.dir
+      size: 111035972
       nfiles: 1005
   convert_localization:
     cmd: python src/data/coco_to_yolo.py --task pose --input data/interim 
@@ -116,8 +116,8 @@ stages:
       size: 108193
     - path: src/data/coco_to_yolo.py
       hash: md5
-      md5: 9aa7fbc2b03eeda1886358b3a28eef52
-      size: 14303
+      md5: d3dc49b3e47f47819ff2c33de2f04152
+      size: 15047
     params:
       params.yaml:
         localization.category_id: 2
@@ -126,6 +126,6 @@ stages:
     outs:
     - path: data/processed/localization
       hash: md5
-      md5: e13d21a204bdee028510cab5d3e92692.dir
-      size: 108481281
+      md5: a3a4e8fbb7bb27cd779398703c9acf03.dir
+      size: 108481307
       nfiles: 979

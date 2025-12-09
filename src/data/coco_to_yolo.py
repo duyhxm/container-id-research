@@ -287,18 +287,27 @@ class COCOToYOLOConverter:
         """
         # Use relative path from project root for portability
         # When data.yaml is at data/processed/detection/data.yaml,
-        # and called from project root, paths should be relative to data.yaml location
+        # train.py will convert data.yaml path to absolute, then Ultralytics resolves correctly
         # Reference: https://docs.ultralytics.com/datasets/detect/
-        
-        # Get relative path from project root to output_dir
-        try:
-            rel_path = output_dir.relative_to(Path.cwd())
-        except ValueError:
-            # If output_dir is not relative to cwd, use absolute path
-            rel_path = output_dir.absolute()
-        
+
+        # Always use relative path from project root (makes data.yaml portable)
+        # output_dir is already Path object, get its relative path
+        if output_dir.is_absolute():
+            # If absolute, convert to relative from cwd
+            try:
+                rel_path = output_dir.relative_to(Path.cwd())
+            except ValueError:
+                # Can't make relative, this shouldn't happen in our setup
+                # Fall back to just the directory name
+                rel_path = output_dir
+        else:
+            # Already relative
+            rel_path = output_dir
+
         data_yaml = {
-            "path": str(rel_path),  # Relative path from project root
+            "path": str(rel_path).replace(
+                "\\", "/"
+            ),  # Use forward slashes for portability
             "train": "images/train",
             "val": "images/val",
             "test": "images/test",
