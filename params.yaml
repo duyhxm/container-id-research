@@ -84,23 +84,23 @@ detection:
   
   # Model configuration
   model:
-    architecture: yolov11n  # Options: yolov11n, yolov11s, yolov11m
+    architecture: yolov11s  # YOLOv11-Small (~45 MB, optimal for research)
     pretrained: true
     
-  # Training hyperparameters
+  # Training hyperparameters (Research-grade configuration)
   training:
-    epochs: 100
-    batch_size: 16
+    epochs: 150  # Increased for better convergence (from 100)
+    batch_size: 32  # Optimized for T4 x2 GPU (from 16)
     optimizer: AdamW
-    learning_rate: 0.001
+    learning_rate: 0.001  # Base LR for batch_size=32
     weight_decay: 0.0005
-    warmup_epochs: 3
+    warmup_epochs: 5  # Increased for larger batch (from 3)
     
     # Learning rate schedule
-    lr_scheduler: cosine
+    lr_scheduler: cosine  # Smooth decay for research training
     
     # Early stopping
-    patience: 20
+    patience: 30  # Increased patience for research (from 20)
     
   # Augmentation (YOLO built-in)
   augmentation:
@@ -127,11 +127,13 @@ detection:
   wandb:
     project: container-id-research
     entity: null  # Set to your wandb username
-    name: detection_exp001_baseline
+    name: detection_exp001_yolo11s_baseline
     tags:
       - module1
       - detection
-      - yolov11n
+      - yolov11s
+      - research
+      - t4x2
 
 # ============================================================================
 # MODULE 2: IMAGE QUALITY ASSESSMENT (Future)
@@ -316,12 +318,12 @@ hardware:
   # Device configuration
   device: cuda  # Options: cuda, cpu, mps (for Mac M1/M2)
   
-  # Multi-GPU training
-  multi_gpu: false
-  gpu_ids: [0]
+  # Multi-GPU training (Kaggle T4 x2 configuration)
+  multi_gpu: true  # Enable for Kaggle T4 x2
+  gpu_ids: [0, 1]  # Use both T4 GPUs
   
   # Performance
-  num_workers: 4  # DataLoader workers
+  num_workers: 8  # Increased for dual GPU (from 4)
   pin_memory: true
   mixed_precision: true  # AMP for faster training
 
