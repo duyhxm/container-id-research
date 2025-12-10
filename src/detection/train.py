@@ -80,22 +80,17 @@ def initialize_wandb(config: Dict[str, Any], experiment_name: Optional[str]) -> 
     logging.info(f"WandB URL: {wandb.run.url}")
 
 
-def prepare_training_args(config: Dict[str, Any], data_yaml: str) -> Dict[str, Any]:
+def prepare_training_args(config: Dict[str, Any], data_yaml_abs: str) -> Dict[str, Any]:
     """
     Prepare training arguments for Ultralytics YOLO.train().
 
     Args:
         config: Detection configuration
-        data_yaml: Path to data.yaml file (will be converted to absolute path)
+        data_yaml_abs: Absolute path to data.yaml file (already converted)
 
     Returns:
         Dictionary of training arguments
     """
-    from pathlib import Path
-    
-    # Convert data_yaml to absolute path to avoid path resolution issues
-    # Ultralytics resolves paths relative to working directory, so absolute path is safest
-    data_yaml_abs = str(Path(data_yaml).absolute())
     model_cfg = config.get("model", {})
     train_cfg = config.get("training", {})
     aug_cfg = config.get("augmentation", {})
@@ -203,13 +198,17 @@ def train_detection_model(
     # Setup
     setup_logging()
     logger = logging.getLogger(__name__)
+    
+    # Convert data_yaml to absolute path early for use throughout the function
+    from pathlib import Path as DataPath
+    data_yaml_abs = str(DataPath(data_yaml).absolute())
 
     logger.info("=" * 60)
     logger.info("Container Door Detection Training")
     logger.info("=" * 60)
     logger.info(f"Start time: {datetime.now().isoformat()}")
     logger.info(f"Configuration: {config_path}")
-    logger.info(f"Dataset: {data_yaml}")
+    logger.info(f"Dataset: {data_yaml} (absolute: {data_yaml_abs})")
 
     # Check ultralytics is installed
     try:
@@ -252,7 +251,7 @@ def train_detection_model(
 
     # Prepare training arguments
     logger.info("Preparing training configuration...")
-    train_args = prepare_training_args(config, data_yaml)
+    train_args = prepare_training_args(config, data_yaml_abs)
     logger.info(f"Training for {train_args['epochs']} epochs")
     logger.info(f"Batch size: {train_args['batch']}")
     logger.info(f"Learning rate: {train_args['lr0']}")
