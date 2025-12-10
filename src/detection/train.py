@@ -89,7 +89,7 @@ def prepare_training_args(config: Dict[str, Any], data_yaml_abs: str) -> Dict[st
         data_yaml_abs: Absolute path to data.yaml file (already converted)
 
     Returns:
-        Dictionary of training arguments
+        Dictionary of training arguments (EXCLUDES wandb config)
     """
     model_cfg = config.get("model", {})
     train_cfg = config.get("training", {})
@@ -170,9 +170,8 @@ def prepare_training_args(config: Dict[str, Any], data_yaml_abs: str) -> Dict[st
         # Validation
         "val": True,
         "save_json": True,
-        # WandB integration (enable automatic logging)
-        # If WandB is already initialized, Ultralytics will auto-log to it
-        "wandb": True,
+        # NOTE: Do NOT pass 'wandb' parameter here
+        # Ultralytics auto-detects initialized WandB session via wandb.run
     }
 
     return args
@@ -216,35 +215,7 @@ def train_detection_model(
 
     # Check ultralytics is installed
     try:
-        import subprocess
-        import sys
-
         from ultralytics import YOLO
-
-        # Enable WandB logging in Ultralytics settings
-        # This is required for Ultralytics to automatically log metrics to WandB
-        # Reference: https://docs.ultralytics.com/integrations/weights-biases/
-        # Command: yolo settings wandb=True
-        try:
-            result = subprocess.run(
-                [sys.executable, "-m", "ultralytics", "settings", "wandb=True"],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            if result.returncode == 0:
-                logger.info("✓ Enabled WandB logging in Ultralytics settings")
-            else:
-                logger.warning(
-                    f"Could not enable WandB via yolo settings: {result.stderr}"
-                )
-        except Exception as e:
-            logger.warning(f"Could not enable WandB in Ultralytics settings: {e}")
-            logger.info(
-                "Note: WandB metrics may not be logged automatically by Ultralytics"
-            )
-            logger.info("Manual wandb.log() calls will still work")
-
     except ImportError:
         logger.error("ultralytics not installed. Install with: pip install ultralytics")
         raise
@@ -255,7 +226,8 @@ def train_detection_model(
     model_name = config["model"]["architecture"]
     logger.info(f"Model architecture: {model_name}")
 
-    # Initialize WandB
+    # Initialize WandB BEFORE model initialization
+    # Ultralytics will auto-detect wandb.run and log metrics
     logger.info("Initializing experiment tracking...")
     initialize_wandb(config, experiment_name)
 
