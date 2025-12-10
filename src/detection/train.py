@@ -101,13 +101,10 @@ def prepare_training_args(config: Dict[str, Any], data_yaml_abs: str) -> Dict[st
     train_cfg = config.get("training", {})
     aug_cfg = config.get("augmentation", {})
 
-    # Check if wandb is available and initialized
-    try:
-        import wandb
-
-        project_name = wandb.run.project if wandb.run else "weights"
-    except (ImportError, AttributeError):
-        project_name = "weights"
+    # Force output to weights/ directory for consistent checkpoint location
+    # This ensures trained models are always saved to weights/detection/
+    # regardless of WandB status, making it easier to find and download
+    project_name = "weights"
 
     # Load hardware configuration for multi-GPU support
     from pathlib import Path as ConfigPath
@@ -282,6 +279,13 @@ def train_detection_model(
     # Prepare training arguments
     logger.info("Preparing training configuration...")
     train_args = prepare_training_args(config, data_yaml_abs)
+
+    # Ensure output directory exists (GitHub doesn't track empty folders)
+    # This is critical when cloning fresh repo where weights/ may not exist
+    output_dir = Path(train_args["project"]) / train_args["name"]
+    output_dir.mkdir(parents=True, exist_ok=True)
+    logger.info(f"Output directory: {output_dir.absolute()}")
+
     logger.info(f"Training for {train_args['epochs']} epochs")
     logger.info(f"Batch size: {train_args['batch']}")
     logger.info(f"Learning rate: {train_args['lr0']}")
