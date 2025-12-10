@@ -216,10 +216,11 @@ def train_detection_model(
 
     # Check ultralytics is installed
     try:
-        from ultralytics import YOLO
         import subprocess
         import sys
-        
+
+        from ultralytics import YOLO
+
         # Enable WandB logging in Ultralytics settings
         # This is required for Ultralytics to automatically log metrics to WandB
         # Reference: https://docs.ultralytics.com/integrations/weights-biases/
@@ -229,17 +230,21 @@ def train_detection_model(
                 [sys.executable, "-m", "ultralytics", "settings", "wandb=True"],
                 capture_output=True,
                 text=True,
-                timeout=10
+                timeout=10,
             )
             if result.returncode == 0:
                 logger.info("✓ Enabled WandB logging in Ultralytics settings")
             else:
-                logger.warning(f"Could not enable WandB via yolo settings: {result.stderr}")
+                logger.warning(
+                    f"Could not enable WandB via yolo settings: {result.stderr}"
+                )
         except Exception as e:
             logger.warning(f"Could not enable WandB in Ultralytics settings: {e}")
-            logger.info("Note: WandB metrics may not be logged automatically by Ultralytics")
+            logger.info(
+                "Note: WandB metrics may not be logged automatically by Ultralytics"
+            )
             logger.info("Manual wandb.log() calls will still work")
-            
+
     except ImportError:
         logger.error("ultralytics not installed. Install with: pip install ultralytics")
         raise
