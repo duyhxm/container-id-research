@@ -170,6 +170,9 @@ def prepare_training_args(config: Dict[str, Any], data_yaml_abs: str) -> Dict[st
         # Validation
         "val": True,
         "save_json": True,
+        # WandB integration (enable automatic logging)
+        # If WandB is already initialized, Ultralytics will auto-log to it
+        "wandb": True,
     }
 
     return args
@@ -198,9 +201,10 @@ def train_detection_model(
     # Setup
     setup_logging()
     logger = logging.getLogger(__name__)
-    
+
     # Convert data_yaml to absolute path early for use throughout the function
     from pathlib import Path as DataPath
+
     data_yaml_abs = str(DataPath(data_yaml).absolute())
 
     logger.info("=" * 60)
@@ -213,6 +217,29 @@ def train_detection_model(
     # Check ultralytics is installed
     try:
         from ultralytics import YOLO
+        import subprocess
+        import sys
+        
+        # Enable WandB logging in Ultralytics settings
+        # This is required for Ultralytics to automatically log metrics to WandB
+        # Reference: https://docs.ultralytics.com/integrations/weights-biases/
+        # Command: yolo settings wandb=True
+        try:
+            result = subprocess.run(
+                [sys.executable, "-m", "ultralytics", "settings", "wandb=True"],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            if result.returncode == 0:
+                logger.info("✓ Enabled WandB logging in Ultralytics settings")
+            else:
+                logger.warning(f"Could not enable WandB via yolo settings: {result.stderr}")
+        except Exception as e:
+            logger.warning(f"Could not enable WandB in Ultralytics settings: {e}")
+            logger.info("Note: WandB metrics may not be logged automatically by Ultralytics")
+            logger.info("Manual wandb.log() calls will still work")
+            
     except ImportError:
         logger.error("ultralytics not installed. Install with: pip install ultralytics")
         raise
@@ -280,48 +307,88 @@ def train_detection_model(
 
     # Evaluate on test set
     logger.info("Evaluating on test set...")
-    test_metrics = model.val(data=data_yaml_abs, split="test", save_json=True, plots=True)
+    test_metrics = model.val(
+        data=data_yaml_abs, split="test", save_json=True, plots=True
+    )
 
     # Log final metrics to WandB (with safe access to handle None results)
     final_metrics = {
         "training_duration_hours": training_duration / 3600,
     }
-    
+
     # Safely extract validation metrics from training results
     if results is not None and hasattr(results, "box") and results.box is not None:
-        final_metrics.update({
-            "val/mAP50_final": float(results.box.map50) if results.box.map50 is not None else 0.0,
-            "val/mAP50-95_final": float(results.box.map) if results.box.map is not None else 0.0,
-            "val/precision_final": float(results.box.mp) if results.box.mp is not None else 0.0,
-            "val/recall_final": float(results.box.mr) if results.box.mr is not None else 0.0,
-        })
-        logger.info(f"Validation mAP@50: {final_metrics.get('val/mAP50_final', 0.0):.4f}")
+        final_metrics.update(
+            {
+                "val/mAP50_final": (
+                    float(results.box.map50) if results.box.map50 is not None else 0.0
+                ),
+                "val/mAP50-95_final": (
+                    float(results.box.map) if results.box.map is not None else 0.0
+                ),
+                "val/precision_final": (
+                    float(results.box.mp) if results.box.mp is not None else 0.0
+                ),
+                "val/recall_final": (
+                    float(results.box.mr) if results.box.mr is not None else 0.0
+                ),
+            }
+        )
+        logger.info(
+            f"Validation mAP@50: {final_metrics.get('val/mAP50_final', 0.0):.4f}"
+        )
     else:
         logger.warning("Training results object is None or missing box metrics")
-        final_metrics.update({
-            "val/mAP50_final": 0.0,
-            "val/mAP50-95_final": 0.0,
-            "val/precision_final": 0.0,
-            "val/recall_final": 0.0,
-        })
-    
+        final_metrics.update(
+            {
+                "val/mAP50_final": 0.0,
+                "val/mAP50-95_final": 0.0,
+                "val/precision_final": 0.0,
+                "val/recall_final": 0.0,
+            }
+        )
+
     # Safely extract test metrics
-    if test_metrics is not None and hasattr(test_metrics, "box") and test_metrics.box is not None:
-        final_metrics.update({
-            "test/mAP50": float(test_metrics.box.map50) if test_metrics.box.map50 is not None else 0.0,
-            "test/mAP50-95": float(test_metrics.box.map) if test_metrics.box.map is not None else 0.0,
-            "test/precision": float(test_metrics.box.mp) if test_metrics.box.mp is not None else 0.0,
-            "test/recall": float(test_metrics.box.mr) if test_metrics.box.mr is not None else 0.0,
-        })
+    if (
+        test_metrics is not None
+        and hasattr(test_metrics, "box")
+        and test_metrics.box is not None
+    ):
+        final_metrics.update(
+            {
+                "test/mAP50": (
+                    float(test_metrics.box.map50)
+                    if test_metrics.box.map50 is not None
+                    else 0.0
+                ),
+                "test/mAP50-95": (
+                    float(test_metrics.box.map)
+                    if test_metrics.box.map is not None
+                    else 0.0
+                ),
+                "test/precision": (
+                    float(test_metrics.box.mp)
+                    if test_metrics.box.mp is not None
+                    else 0.0
+                ),
+                "test/recall": (
+                    float(test_metrics.box.mr)
+                    if test_metrics.box.mr is not None
+                    else 0.0
+                ),
+            }
+        )
         logger.info(f"Test mAP@50: {final_metrics.get('test/mAP50', 0.0):.4f}")
     else:
         logger.warning("Test metrics object is None or missing box metrics")
-        final_metrics.update({
-            "test/mAP50": 0.0,
-            "test/mAP50-95": 0.0,
-            "test/precision": 0.0,
-            "test/recall": 0.0,
-        })
+        final_metrics.update(
+            {
+                "test/mAP50": 0.0,
+                "test/mAP50-95": 0.0,
+                "test/precision": 0.0,
+                "test/recall": 0.0,
+            }
+        )
 
     try:
         import wandb
