@@ -59,6 +59,12 @@ def initialize_wandb(config: Dict[str, Any], experiment_name: Optional[str]) -> 
         logging.warning("wandb not installed, skipping experiment tracking")
         return
 
+    # Check if WandB run is already active (e.g., from parent process)
+    if wandb.run is not None:
+        logging.info(f"WandB run already active: {wandb.run.name}")
+        logging.info(f"Reusing existing run: {wandb.run.url}")
+        return  # Don't re-initialize, use existing run
+
     wandb_config = config.get("wandb", {})
 
     wandb.init(
@@ -115,11 +121,31 @@ def prepare_training_args(config: Dict[str, Any], data_yaml_abs: str) -> Dict[st
     except Exception:
         hardware_cfg = {}
 
-    # Determine device configuration
+    # WORKAROUND: Force single GPU due to Ultralytics bug #19519
+    # Multi-GPU training (device=[0,1]) causes model.train() to return None
+    # instead of results object, breaking metrics logging and test evaluation.
+    # See: https://github.com/ultralytics/ultralytics/issues/19519
+    # TODO: Remove this workaround when upstream bug is fixed
     if hardware_cfg.get("multi_gpu", False):
-        device = hardware_cfg.get("gpu_ids", [0, 1])  # Multi-GPU: list of GPU IDs
-    else:
-        device = 0  # Single GPU
+        logging.warning("=" * 70)
+        logging.warning("⚠️  MULTI-GPU MODE DISABLED (Ultralytics Bug #19519)")
+        logging.warning("=" * 70)
+        logging.warning(
+            "Issue: model.train() returns None with multi-GPU (device=[0,1])"
+        )
+        logging.warning("Impact: Breaks metrics logging and test evaluation")
+        logging.warning("Workaround: Training on single GPU (device=0)")
+        logging.warning(
+            "Performance: ~2x slower than multi-GPU, but results are stable"
+        )
+        logging.warning(
+            "Reference: https://github.com/ultralytics/ultralytics/issues/19519"
+        )
+        logging.warning("=" * 70)
+        logging.warning("")
+
+    # Always use single GPU (device=0) until Ultralytics bug is resolved
+    device = 0
 
     args = {
         # Data
@@ -377,17 +403,34 @@ def train_detection_model(
     except (ImportError, AttributeError):
         pass
 
+    # Print final metrics (with safe None checks)
     logger.info("Final Validation Metrics:")
-    logger.info(f"  mAP@50: {results.box.map50:.4f}")
-    logger.info(f"  mAP@50-95: {results.box.map:.4f}")
-    logger.info(f"  Precision: {results.box.mp:.4f}")
-    logger.info(f"  Recall: {results.box.mr:.4f}")
+    if results is not None and hasattr(results, "box") and results.box is not None:
+        logger.info(f"  mAP@50: {results.box.map50:.4f}")
+        logger.info(f"  mAP@50-95: {results.box.map:.4f}")
+        logger.info(f"  Precision: {results.box.mp:.4f}")
+        logger.info(f"  Recall: {results.box.mr:.4f}")
+    else:
+        logger.info(f"  mAP@50: {final_metrics.get('val/mAP50_final', 0.0):.4f}")
+        logger.info(f"  mAP@50-95: {final_metrics.get('val/mAP50-95_final', 0.0):.4f}")
+        logger.info(f"  Precision: {final_metrics.get('val/precision_final', 0.0):.4f}")
+        logger.info(f"  Recall: {final_metrics.get('val/recall_final', 0.0):.4f}")
 
     logger.info("Final Test Metrics:")
-    logger.info(f"  mAP@50: {test_metrics.box.map50:.4f}")
-    logger.info(f"  mAP@50-95: {test_metrics.box.map:.4f}")
-    logger.info(f"  Precision: {test_metrics.box.mp:.4f}")
-    logger.info(f"  Recall: {test_metrics.box.mr:.4f}")
+    if (
+        test_metrics is not None
+        and hasattr(test_metrics, "box")
+        and test_metrics.box is not None
+    ):
+        logger.info(f"  mAP@50: {test_metrics.box.map50:.4f}")
+        logger.info(f"  mAP@50-95: {test_metrics.box.map:.4f}")
+        logger.info(f"  Precision: {test_metrics.box.mp:.4f}")
+        logger.info(f"  Recall: {test_metrics.box.mr:.4f}")
+    else:
+        logger.info(f"  mAP@50: {final_metrics.get('test/mAP50', 0.0):.4f}")
+        logger.info(f"  mAP@50-95: {final_metrics.get('test/mAP50-95', 0.0):.4f}")
+        logger.info(f"  Precision: {final_metrics.get('test/precision', 0.0):.4f}")
+        logger.info(f"  Recall: {final_metrics.get('test/recall', 0.0):.4f}")
 
     logger.info("=" * 60)
     logger.info("Training Complete!")
