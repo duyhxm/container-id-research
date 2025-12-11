@@ -843,12 +843,44 @@ if ret_code == 0:
                         if ret == 0:
                             print("✓ Committed to Git")
 
-                            # Step 9.6: Git Push
-                            print("\n[9.6] Pushing to GitHub...")
-                            ret = os.system("git push origin main")
+                            # Step 9.6: Create new branch and push
+                            print("\n[9.6] Creating new branch and pushing to GitHub...")
+                            
+                            # Generate branch name from experiment name and timestamp
+                            from datetime import datetime
+                            timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+                            # Sanitize experiment name for branch name (replace spaces/special chars)
+                            safe_exp_name = EXPERIMENT_NAME.replace(" ", "-").replace("_", "-").lower()
+                            branch_name = f"kaggle-training-{safe_exp_name}-{timestamp}"
+                            
+                            print(f"  Creating branch: {branch_name}")
+                            
+                            # Create and checkout new branch
+                            ret_branch = os.system(f"git checkout -b {branch_name}")
+                            if ret_branch != 0:
+                                print(f"  ⚠️  Failed to create branch {branch_name}")
+                                print("     Trying to push to current branch instead")
+                                # Get current branch name
+                                import subprocess
+                                try:
+                                    current_branch = subprocess.check_output(
+                                        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                                        stderr=subprocess.DEVNULL
+                                    ).decode().strip()
+                                    branch_name = current_branch
+                                    print(f"  Using current branch: {branch_name}")
+                                except:
+                                    branch_name = "main"
+                                    print(f"  Falling back to: {branch_name}")
+                            else:
+                                print(f"  ✓ Created and checked out branch: {branch_name}")
+                            
+                            # Push to new branch
+                            print(f"\n  Pushing to origin/{branch_name}...")
+                            ret = os.system(f"git push -u origin {branch_name}")
 
                             if ret == 0:
-                                print("✓ Pushed to GitHub successfully")
+                                print(f"✓ Pushed to GitHub successfully (branch: {branch_name})")
                                 print()
                                 print("=" * 70)
                                 print(" ✨ SYNC COMPLETE!")
@@ -865,13 +897,21 @@ if ret_code == 0:
                                     f"  3. ✓ DVC metadata (.dvc files): GitHub repository"
                                 )
                                 print()
+                                print(f"📌 Branch: {branch_name}")
+                                print()
                                 print("To download on local machine:")
-                                print("  $ git pull")
+                                print(f"  $ git fetch origin {branch_name}")
+                                print(f"  $ git checkout {branch_name}")
                                 if model_files:
                                     first_dvc = f"{model_files[0]}.dvc"
                                     print(f'  $ dvc pull "{first_dvc}"')
                                 print()
-                            else:
+                                print("To merge into main:")
+                                print("  $ git checkout main")
+                                print(f"  $ git merge {branch_name}")
+                                print("  $ git push origin main")
+                                print()
+                            else:f"   $ git push -u origin {branch_name}
                                 print("⚠️  Git push failed (check authentication)")
                                 print("   Possible causes:")
                                 print("   - GitHub token expired or invalid")
@@ -915,7 +955,9 @@ if ret_code == 0:
     print("  1. Check WandB dashboard for detailed metrics")
     print("  2. Download model from DVC (on local machine):")
     print()
-    print("     git pull")
+    print("     # Fetch the training branch (if Git push succeeded)")
+    print("     git fetch origin")
+    print("     git checkout <branch-name>  # See output above for branch name")
     print("     dvc pull  # Pulls all tracked models")
     print()
     print("  3. Or find and download specific files from Kaggle Output:")
