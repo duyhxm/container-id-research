@@ -273,6 +273,7 @@ dvc repro convert_localization
 
 #### Module 1: Container Door Detection
 
+**Local Training:**
 ```bash
 # Train YOLOv11 detection model
 python src/detection/train.py --config experiments/detection/exp001_baseline/config.yaml
@@ -280,6 +281,15 @@ python src/detection/train.py --config experiments/detection/exp001_baseline/con
 # Run inference
 python src/detection/inference.py --weights weights/detection/best.pt --source test_images/
 ```
+
+**Kaggle Training (Recommended):**
+> 📌 For GPU-accelerated training on Kaggle (free T4/P100 GPUs), see: [**Kaggle Training Guide**](KAGGLE_TRAINING_GUIDE.md)
+>
+> The guide includes:
+> - Direct notebook workflow (single-cell execution)
+> - DVC session token setup (automatic model sync)
+> - WandB integration for experiment tracking
+> - Expected results: mAP@50 > 0.90, inference < 50ms
 
 #### Module 3: Container ID Localization
 

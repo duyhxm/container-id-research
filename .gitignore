@@ -452,3 +452,6 @@ output/
 visualizations/*.png
 visualizations/*.jpg
 !visualizations/.gitkeep
+
+# GitHub Copilot configuration (local only)
+.github/

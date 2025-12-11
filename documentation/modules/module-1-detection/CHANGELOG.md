@@ -1,6 +1,69 @@
 # Changelog: Module 1 - Container Door Detection
 
-## [Unreleased] - 2024-12-09
+## [Unreleased] - 2024-12-11
+
+### 🚀 Features
+- **HIGH**: Added automatic DVC & Git sync to `kaggle_training_notebook.py` (commit 4240761)
+  - Dynamic output detection: `weights/detection/weights/`, `weights/detection/`, `runs/`
+  - Track only `best.pt` (skip epoch checkpoints for storage optimization)
+  - Git authentication with GITHUB_TOKEN (OAuth format: `https://{token}@github.com`)
+  - DVC push to Google Drive (note: requires session token for personal Drive)
+  - Automatic metadata commit and push to GitHub
+- **CRITICAL**: Trained YOLOv11s baseline model (commit 8d3ddaa)
+  - Experiment: `detection_exp001_yolo11s_baseline`
+  - Output: `weights/detection/weights/best.pt` (~19MB)
+  - Artifacts: 4 files (metrics, curves)
+  - DVC tracking: 1 .dvc file
+  - Training completed on Kaggle GPU environment
+
+### 🐛 Bug Fixes
+- **HIGH**: Fixed indentation error in `kaggle_training_notebook.py` (line 809: `if ret == 0:`)
+  - Changed from 20 spaces to 16 spaces for correct scope
+  - Ensures proper execution of DVC push success message
+- **HIGH**: Ensure weights directory exists before training (commit 27b643b)
+  - Prevents FileNotFoundError when saving checkpoints
+- **HIGH**: Force single GPU to workaround Ultralytics bug #19519 (commit aeccd9c)
+  - Use `device=0` instead of `device=[0, 1]` to avoid CUDA errors
+- **MEDIUM**: Remove invalid wandb parameter from YOLO train args (commit 3218506)
+  - Removed unsupported parameter causing training failures
+- **MEDIUM**: Clean wandb setup and entrypoint (commit 6feeb7a)
+  - Simplified WandB integration
+- **MEDIUM**: Enable WandB automatic logging in Ultralytics (commit 9bdc81a)
+  - Fixed wandb initialization for automatic metric tracking
+- **MEDIUM**: Resolve data_yaml_abs scope issue and improve wandb integration (commit e6a5601)
+  - Fixed variable scope bug causing training failures
+
+### 📝 Documentation
+- **HIGH**: Consolidated Kaggle documentation (commit e18adaf)
+  - Deleted: `KAGGLE_SECRETS_SETUP.md`, `KAGGLE_MODEL_DOWNLOAD_GUIDE.md`, `kaggle-secrets-fix.md`
+  - Merged content into `KAGGLE_TRAINING_GUIDE.md` (single source of truth)
+  - Maintained separation: User guide (Vietnamese) vs Technical spec (English)
+  - Result: 5 files → 2 files (60% reduction in documentation noise)
+- **HIGH**: Documented DVC session token authentication method
+  - Replaces Service Account JSON (which cannot write to personal Drive)
+  - Fully automated DVC push/pull from Kaggle
+  - Token refresh workflow documented (~7 day expiration)
+- **HIGH**: Updated `technical-specification-training.md` with session token method
+  - System diagram updated (DVC_SERVICE_ACCOUNT_JSON → GDRIVE_CREDENTIALS_DATA)
+  - Step 9: "Attempt dvc push (⚠️ fails)" → "Push to Google Drive ✅"
+  - Section 3.1.1: Complete rewrite for session token setup
+- **HIGH**: Updated `kaggle-training-workflow.md` with Known Limitations section
+  - Added DVC session token setup workflow (5 detailed steps)
+  - Token maintenance table (expiration, refresh, security)
+  - Version history: Added v2.1 entry
+- **MEDIUM**: Added refactoring plan for Module 1 documentation cleanup
+  - Tracks migration from SSH tunnel to Direct Notebook workflow
+  - 50+ SSH references to be updated across documentation
+
+### 🔧 Enhancements
+- **HIGH**: Kaggle training notebook now supports fully automated workflow
+  - No manual download required (session token enables DVC push)
+  - Automatic git commit and push (if GITHUB_TOKEN configured)
+  - Improved error handling and status reporting
+
+---
+
+## [Released] - 2024-12-09
 
 ### 🔒 Security
 - **CRITICAL**: Added secure file permissions (600) for DVC service account credentials in `setup_kaggle.sh`
