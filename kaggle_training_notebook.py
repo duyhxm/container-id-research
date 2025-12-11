@@ -18,8 +18,10 @@ Time: ~3-4 hours
 """
 
 import base64
+import json
 import os
 import sys
+from pathlib import Path
 
 print("=" * 70)
 print(" CONTAINER DOOR DETECTION TRAINING - Module 1")
@@ -27,14 +29,50 @@ print(" Complete Workflow: Clone → Setup → Train")
 print("=" * 70)
 
 # ============================================================================
+# CONFIGURATION
+# ============================================================================
+REPO_URL = "https://github.com/duyhxm/container-id-research.git"
+REPO_BRANCH = "main"
+EXPERIMENT_NAME = "detection_exp001_yolo11s_baseline"
+
+# ============================================================================
+# Step 0: Verify GPU availability (FAST FAIL)
+# ============================================================================
+print("\n[0/9] Verifying GPU availability...")
+
+try:
+    import torch
+except ImportError:
+    print("❌ PyTorch not installed!")
+    print("   This is unusual - Kaggle should have PyTorch pre-installed")
+    print("   Try restarting the kernel")
+    sys.exit(1)
+
+print(f"PyTorch version: {torch.__version__}")
+print(f"CUDA available: {torch.cuda.is_available()}")
+
+if not torch.cuda.is_available():
+    print("\n❌ GPU NOT AVAILABLE!")
+    print("⚠️  Please enable GPU:")
+    print("   1. Click Settings (gear icon)")
+    print("   2. Accelerator → GPU T4 or P100")
+    print("   3. Save & run all")
+    sys.exit(1)
+
+print(f"GPU count: {torch.cuda.device_count()}")
+for i in range(torch.cuda.device_count()):
+    print(f"✓ GPU {i}: {torch.cuda.get_device_name(i)}")
+
+print("✓ GPU verification passed")
+
+# ============================================================================
 # Step 1: Clone repository from GitHub
 # ============================================================================
-print("\n[1/8] Cloning repository from GitHub...")
+print("\n[1/9] Cloning repository from GitHub...")
 
-REPO_URL = "https://github.com/duyhxm/container-id-research.git"
-REPO_PATH = "/kaggle/working/container-id-research"
+REPO_PATH = Path("/kaggle/working/container-id-research")
 
-if os.path.exists(REPO_PATH):
+if REPO_PATH.exists():
     print(f"⚠️  Repository already exists at {REPO_PATH}")
     response = input("Delete and re-clone? (yes/no): ").strip().lower()
     if response == "yes":
@@ -45,9 +83,9 @@ if os.path.exists(REPO_PATH):
     else:
         print("✓ Using existing repository")
 
-if not os.path.exists(REPO_PATH):
-    print(f"Cloning from {REPO_URL}...")
-    ret = os.system(f"git clone {REPO_URL} {REPO_PATH}")
+if not REPO_PATH.exists():
+    print(f"Cloning from {REPO_URL} (branch: {REPO_BRANCH})...")
+    ret = os.system(f"git clone -b {REPO_BRANCH} {REPO_URL} {REPO_PATH}")
     if ret != 0:
         print("❌ Failed to clone repository!")
         print("Check repository URL and internet connection")
@@ -63,7 +101,7 @@ print(f"✓ Working directory: {os.getcwd()}")
 # ============================================================================
 # Step 2: Install dependencies from pyproject.toml
 # ============================================================================
-print("\n[2/8] Installing dependencies from pyproject.toml...")
+print("\n[2/9] Installing dependencies from pyproject.toml...")
 
 try:
     # Python 3.11+ has tomllib built-in
@@ -128,30 +166,9 @@ else:
     print("✓ Dependencies installed successfully")
 
 # ============================================================================
-# Step 3: Verify GPU availability
+# Step 3: Configure DVC credentials
 # ============================================================================
-print("\n[3/8] Verifying GPU availability...")
-import torch
-
-print(f"PyTorch version: {torch.__version__}")
-print(f"CUDA available: {torch.cuda.is_available()}")
-
-if torch.cuda.is_available():
-    print(f"GPU count: {torch.cuda.device_count()}")
-    for i in range(torch.cuda.device_count()):
-        print(f"✓ GPU {i}: {torch.cuda.get_device_name(i)}")
-else:
-    print("\n❌ GPU NOT AVAILABLE!")
-    print("⚠️  Please enable GPU:")
-    print("   1. Click Settings (gear icon)")
-    print("   2. Accelerator → GPU T4 or P100")
-    print("   3. Save & run all")
-    sys.exit(1)
-
-# ============================================================================
-# Step 4: Configure DVC credentials
-# ============================================================================
-print("\n[4/8] Configuring DVC credentials...")
+print("\n[3/9] Configuring DVC credentials...")
 
 try:
     # Import Kaggle Secrets API (correct way to access secrets)
@@ -160,30 +177,35 @@ try:
     user_secrets = UserSecretsClient()
     dvc_json = None
 
-    # Option 1: Direct from Kaggle Secrets API (PRIMARY METHOD)
+    # Option 1: PRIMARY - Direct from Kaggle Secrets API
+    # This is the standard method as of Dec 2024 (Kaggle API v1.5+)
+    # Secrets configured via notebook "Add-ons → Secrets" UI
     try:
         dvc_json = user_secrets.get_secret("DVC_SERVICE_ACCOUNT_JSON")
         if dvc_json:
-            print(
-                f"✓ Found DVC_SERVICE_ACCOUNT_JSON from Kaggle Secrets: {len(dvc_json)} characters"
-            )
+            print("✓ Found DVC_SERVICE_ACCOUNT_JSON from Kaggle Secrets")
     except Exception as e:
         print(f"⚠️  Kaggle Secrets API error: {e}")
 
-    # Option 2: Fallback - environment variable (for compatibility)
+    # Option 2: FALLBACK - Environment variable
+    # For backward compatibility with notebooks that manually set os.environ
+    # before calling this cell (rare, but possible in custom workflows)
     if not dvc_json:
         dvc_json = os.environ.get("DVC_SERVICE_ACCOUNT_JSON", "")
         if dvc_json:
             print("✓ Found DVC_SERVICE_ACCOUNT_JSON (environment variable)")
 
-    # Option 3: Base64 encoded (legacy formats)
+    # Option 3: LEGACY - Base64 encoded
+    # From deprecated SSH tunnel method (pre-Dec 2024)
+    # Kept for users migrating from old workflow
+    # TODO: Remove after Q1 2025 when all users migrated
     if not dvc_json:
         dvc_json_b64 = os.environ.get("DVC_SERVICE_ACCOUNT_JSON_B64", "")
         if not dvc_json_b64:
             dvc_json_b64 = os.environ.get("KAGGLE_SECRET_DVC_JSON_B64", "")
 
         if dvc_json_b64:
-            print("✓ Found base64-encoded DVC credentials")
+            print("✓ Found base64-encoded DVC credentials (legacy)")
             dvc_json = base64.b64decode(dvc_json_b64).decode("utf-8")
 
     # If none found, exit with instructions
@@ -199,6 +221,38 @@ try:
         print("   7. Restart kernel (Session → Restart Session)")
         print("   8. Re-run this cell")
         print('\n💡 Tip: Your JSON should start with: {"type":"service_account",...')
+        sys.exit(1)
+
+    # Validate JSON structure before writing
+    try:
+        sa_data = json.loads(dvc_json)
+
+        # Validate required fields for Google Service Account
+        required_fields = [
+            "type",
+            "project_id",
+            "private_key_id",
+            "private_key",
+            "client_email",
+        ]
+        missing = [f for f in required_fields if f not in sa_data]
+
+        if missing:
+            print(f"❌ Invalid Service Account JSON: Missing fields {missing}")
+            print("\n💡 Ensure you copied the COMPLETE JSON from Google Cloud Console")
+            sys.exit(1)
+
+        if sa_data.get("type") != "service_account":
+            print("❌ Invalid Service Account JSON: 'type' must be 'service_account'")
+            print(f"   Found: {sa_data.get('type')}")
+            sys.exit(1)
+
+        print("✓ Service Account JSON validated")
+
+    except json.JSONDecodeError as e:
+        print(f"❌ Invalid JSON format in DVC_SERVICE_ACCOUNT_JSON: {e}")
+        print("💡 Ensure you copied the entire JSON content (including curly braces)")
+        print('   Example: {"type":"service_account","project_id":"..."}')
         sys.exit(1)
 
     # Write to file with secure permissions
@@ -224,9 +278,9 @@ except Exception as e:
     sys.exit(1)
 
 # ============================================================================
-# Step 5: Configure WandB
+# Step 4: Configure WandB
 # ============================================================================
-print("\n[5/8] Configuring WandB...")
+print("\n[4/9] Configuring WandB...")
 
 try:
     # Import Kaggle Secrets API
@@ -235,27 +289,29 @@ try:
     user_secrets = UserSecretsClient()
     wandb_key = None
 
-    # Option 1: Direct from Kaggle Secrets API (PRIMARY METHOD)
+    # Option 1: PRIMARY - Direct from Kaggle Secrets API
+    # Standard method as of Dec 2024 - configured via "Add-ons → Secrets" UI
     try:
         wandb_key = user_secrets.get_secret("WANDB_API_KEY")
         if wandb_key:
-            print(
-                f"✓ Found WANDB_API_KEY from Kaggle Secrets: {len(wandb_key)} characters"
-            )
+            print("✓ Found WANDB_API_KEY from Kaggle Secrets")
     except Exception as e:
         print(f"⚠️  Kaggle Secrets API error: {e}")
 
-    # Option 2: Fallback - environment variable
+    # Option 2: FALLBACK - Environment variable
+    # For custom workflows that set os.environ manually
     if not wandb_key:
         wandb_key = os.environ.get("WANDB_API_KEY", "")
         if wandb_key:
             print("✓ Found WANDB_API_KEY (environment variable)")
 
-    # Option 3: Base64 encoded (legacy)
+    # Option 3: LEGACY - Base64 encoded
+    # From deprecated SSH tunnel method (pre-Dec 2024)
+    # TODO: Remove after Q1 2025
     if not wandb_key:
         wandb_key_b64 = os.environ.get("KAGGLE_SECRET_WANDB_KEY_B64", "")
         if wandb_key_b64:
-            print("✓ Found base64-encoded WandB key")
+            print("✓ Found base64-encoded WandB key (legacy)")
             wandb_key = base64.b64decode(wandb_key_b64).decode("utf-8")
 
     if not wandb_key:
@@ -275,9 +331,9 @@ except Exception as e:
     print("   Continuing without WandB logging...")
 
 # ============================================================================
-# Step 6: Fetch dataset from DVC
+# Step 5: Fetch dataset from DVC
 # ============================================================================
-print("\n[6/8] Fetching dataset from DVC...")
+print("\n[5/9] Fetching dataset from DVC...")
 
 dataset_path = "data/processed/detection"
 
@@ -371,15 +427,27 @@ ret = os.system(f"python src/utils/validate_dataset.py --path {dataset_path}")
 
 if ret != 0:
     print("❌ Dataset validation failed!")
-    print("Check dataset structure and label format")
+    print("\n🔍 Common Causes:")
+    print("   1. DVC pulled incomplete dataset (check internet connection)")
+    print("   2. data.yaml has incorrect paths")
+    print("   3. Label files corrupted or wrong format")
+    print("\n💡 Recovery Steps:")
+    print("   1. Check dataset structure:")
+    print(f"      !ls -lh {dataset_path}/images/train | head")
+    print("   2. Re-pull dataset:")
+    print("      !dvc pull -f")
+    print("   3. Check validation logs above for specific errors")
+    print(
+        "   4. Verify label format (YOLO normalized): class x_center y_center width height"
+    )
     sys.exit(1)
 
 print("✓ Dataset validated successfully")
 
 # ============================================================================
-# Step 7: Display training configuration
+# Step 6: Display training configuration
 # ============================================================================
-print("\n[7/8] Training Configuration:")
+print("\n[6/9] Training Configuration:")
 print("-" * 70)
 
 import yaml
@@ -405,9 +473,9 @@ print(f"\nEstimated time: ~{estimated_hours:.1f} hours on GPU T4 x2")
 print("-" * 70)
 
 # ============================================================================
-# Step 7.5: Download pretrained weights
+# Step 7: Download pretrained weights
 # ============================================================================
-print("\n[7.5/8] Downloading pretrained weights...")
+print("\n[7/9] Downloading pretrained weights...")
 print("=" * 70)
 
 # Pre-download YOLOv11s weights to avoid issues during training
@@ -442,8 +510,9 @@ print("-" * 70)
 print("\n[8/8] Starting training...")
 print("=" * 70)
 print("⏱️  Training will take approximately 3-4 hours")
-print("📊 Monitor progress at: https://wandb.ai")
 print("🔄 This cell will run until training completes")
+print("📊 WandB dashboard URL will be printed when training starts")
+print("💡 Look for: 'WandB URL: https://wandb.ai/...'")
 print("=" * 70)
 print()
 
@@ -453,14 +522,11 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
     print(f"✓ Added project root to Python path: {project_root}")
 
-# Run training script
-experiment_name = "detection_exp001_yolo11s_baseline"
-
 print("\nStarting training script...")
 ret_code = os.system(
     f"PYTHONPATH={project_root}:$PYTHONPATH python src/detection/train.py "
     f"--config params.yaml "
-    f"--experiment {experiment_name}"
+    f"--experiment {EXPERIMENT_NAME}"
 )
 
 # ============================================================================
@@ -477,16 +543,250 @@ if ret_code == 0:
     print("✓ Metadata: weights/detection/metadata.json")
     print("✓ Training curves: weights/detection/results.png")
     print()
+
+    # ========================================================================
+    # Step 9: Automatic DVC & Git Sync
+    # ========================================================================
+    print("\n[9/9] Syncing trained model to DVC and GitHub...")
+    print("=" * 70)
+
+    try:
+        import os
+        from pathlib import Path
+
+        # Ultralytics creates nested structure: {project}/{name}/weights/
+        # Our config: project="weights", name="detection"
+        # Actual output: weights/detection/weights/best.pt
+        output_base = Path("weights/detection")
+        weights_subdir = output_base / "weights"
+
+        # Check multiple possible output locations
+        print("\n[9.1] Locating training outputs...")
+        print(f"  Checking primary: {weights_subdir}")
+        print(f"  Checking fallback: {output_base}")
+        print(f"  Checking runs/: runs/detect/train/weights/")
+
+        # Find the actual output directory
+        actual_weights_dir = None
+        if weights_subdir.exists() and (weights_subdir / "best.pt").exists():
+            actual_weights_dir = weights_subdir
+            print(f"  ✓ Found outputs in: {weights_subdir}")
+        elif output_base.exists() and (output_base / "best.pt").exists():
+            actual_weights_dir = output_base
+            print(f"  ✓ Found outputs in: {output_base}")
+        elif Path("runs/detect/train/weights").exists():
+            actual_weights_dir = Path("runs/detect/train/weights")
+            print(f"  ✓ Found outputs in: runs/detect/train/weights/")
+
+        if not actual_weights_dir:
+            print("⚠️  No training outputs found, skipping sync")
+            print("   Training may have failed or outputs saved elsewhere")
+        else:
+            # Scan for actual output files
+            print(f"\n[9.2] Scanning files in {actual_weights_dir}...")
+
+            # Model weights (for DVC)
+            # Only track best.pt (most important checkpoint)
+            # Skip epoch*.pt (saves DVC storage, rarely needed)
+            model_files = []
+            if (actual_weights_dir / "best.pt").exists():
+                model_path = str(actual_weights_dir / "best.pt")
+                model_files.append(model_path)
+                size_mb = (actual_weights_dir / "best.pt").stat().st_size / (1024**2)
+                print(f"  ✓ Found: best.pt ({size_mb:.2f} MB)")
+
+            # Check for epoch checkpoints (informational only, not tracked)
+            epoch_checkpoints = list(actual_weights_dir.glob("epoch*.pt"))
+            if epoch_checkpoints:
+                total_size_mb = sum(f.stat().st_size for f in epoch_checkpoints) / (
+                    1024**2
+                )
+                print(
+                    f"  ℹ️  Found {len(epoch_checkpoints)} epoch checkpoints ({total_size_mb:.1f} MB total)"
+                )
+                print(
+                    f"     → Skipping epoch*.pt (use best.pt for deployment)"
+                )  # Training artifacts (for Git) - lightweight, useful files
+            # Look in parent directory (one level up from weights/)
+            artifacts_dir = (
+                actual_weights_dir.parent
+                if actual_weights_dir.name == "weights"
+                else actual_weights_dir
+            )
+
+            git_artifacts = []
+            artifact_patterns = [
+                "results.csv",  # Metrics per epoch
+                "results.png",  # Training curves
+                "confusion_matrix.png",
+                "F1_curve.png",
+                "P_curve.png",
+                "R_curve.png",
+                "PR_curve.png",
+                "args.yaml",  # Training arguments
+            ]
+
+            print(f"  Looking for artifacts in: {artifacts_dir}")
+            for artifact in artifact_patterns:
+                artifact_path = artifacts_dir / artifact
+                if artifact_path.exists():
+                    git_artifacts.append(str(artifact_path))
+                    size_kb = artifact_path.stat().st_size / 1024
+                    print(f"  ✓ Found: {artifact} ({size_kb:.1f} KB)")
+
+            if not model_files and not git_artifacts:
+                print("⚠️  No training outputs found, skipping sync")
+            else:
+                # Step 9.3: DVC Add & Push (Model Weights Only)
+                if model_files:
+                    print(
+                        f"\n[9.3] Adding {len(model_files)} model(s) to DVC tracking..."
+                    )
+
+                    dvc_success = True
+                    for model_file in model_files:
+                        # Use relative path from repo root
+                        ret = os.system(f'dvc add "{model_file}"')
+                        if ret == 0:
+                            print(f"  ✓ Tracked: {model_file}.dvc")
+                        else:
+                            print(f"  ⚠️  Failed to track: {model_file}")
+                            dvc_success = False
+
+                    if dvc_success:
+                        print("\n[9.4] Pushing models to Google Drive...")
+                        ret = os.system("dvc push")
+
+                        if ret == 0:
+                            print("✓ Models pushed to DVC remote (Google Drive)")
+                        else:
+                            print("⚠️  DVC push failed (check Google Drive permissions)")
+                            print("   You can manually push later with: dvc push")
+                else:
+                    print("\n⚠️  No model weights found (best.pt)")
+                    print("     Training may have failed or checkpoint not saved")
+
+                # Step 9.4: Git Add & Commit (DVC metadata + training artifacts)
+                print("\n[9.5] Committing to Git...")
+
+                # Stage all relevant files
+                files_to_commit = []
+
+                # DVC metadata files (.dvc)
+                for model_file in model_files:
+                    dvc_file = f"{model_file}.dvc"
+                    if Path(dvc_file).exists():
+                        os.system(f'git add "{dvc_file}"')
+                        files_to_commit.append(dvc_file)
+                        print(f"  ✓ Staged: {dvc_file}")
+
+                # .gitignore (updated by DVC)
+                if Path(".gitignore").exists():
+                    os.system('git add ".gitignore"')
+                    files_to_commit.append(".gitignore")
+                    print(f"  ✓ Staged: .gitignore")
+
+                # Training artifacts (CSV, PNG, YAML)
+                for artifact in git_artifacts:
+                    os.system(f'git add "{artifact}"')
+                    files_to_commit.append(artifact)
+                    artifact_name = Path(artifact).name
+                    print(f"  ✓ Staged: {artifact_name}")
+
+                if files_to_commit:
+                    # Commit with descriptive message
+                    model_names = [Path(f).name for f in model_files]
+                    commit_msg = (
+                        f"feat(detection): add trained YOLOv11s model and artifacts\\n\\n"
+                        f"Experiment: {EXPERIMENT_NAME}\\n"
+                        f"Output location: {actual_weights_dir}\\n"
+                        f"Models: {', '.join(model_names)}\\n"
+                        f"Artifacts: {len(git_artifacts)} files (metrics, curves)\\n"
+                        f"DVC tracking: {len([f for f in files_to_commit if '.dvc' in f])} .dvc files\\n\\n"
+                        f"Training completed on Kaggle GPU environment"
+                    )
+                    ret = os.system(f'git commit -m "{commit_msg}"')
+
+                    if ret == 0:
+                        print("✓ Committed to Git")
+
+                        # Step 9.5: Git Push
+                        print("\n[9.6] Pushing to GitHub...")
+                        ret = os.system("git push origin main")
+
+                        if ret == 0:
+                            print("✓ Pushed to GitHub successfully")
+                            print()
+                            print("=" * 70)
+                            print(" ✨ SYNC COMPLETE!")
+                            print("=" * 70)
+                            print()
+                            print("Your trained model is now accessible:")
+                            print(
+                                f"  1. ✓ Model weights ({len(model_files)} files): DVC remote (Google Drive)"
+                            )
+                            print(
+                                f"  2. ✓ Training artifacts ({len(git_artifacts)} files): GitHub repository"
+                            )
+                            print(
+                                f"  3. ✓ DVC metadata (.dvc files): GitHub repository"
+                            )
+                            print()
+                            print("To download on local machine:")
+                            print("  $ git pull")
+                            if model_files:
+                                first_dvc = f"{model_files[0]}.dvc"
+                                print(f'  $ dvc pull "{first_dvc}"')
+                            print()
+                        else:
+                            print("⚠️  Git push failed (check authentication)")
+                            print(
+                                "   You can manually push later with: git push origin main"
+                            )
+                    else:
+                        print("⚠️  Git commit failed (may have no changes to commit)")
+                else:
+                    print("⚠️  No files to commit")
+
+    except Exception as e:
+        print(f"⚠️  Sync error: {e}")
+        import traceback
+
+        traceback.print_exc()
+        print()
+        print("   Training completed successfully, but automatic sync failed")
+        print("   You can manually sync with:")
+        print()
+        print("   # Find your model file first:")
+        print("   !find . -name 'best.pt'")
+        print()
+        print("   # Then add to DVC (replace path if different):")
+        print("   !dvc add weights/detection/weights/best.pt")
+        print("   !dvc push")
+        print()
+        print("   # Commit to Git:")
+        print("   !git add weights/detection/weights/*.dvc .gitignore")
+        print("   !git add weights/detection/*.csv weights/detection/*.png")
+        print("   !git commit -m 'feat(detection): add trained model'")
+        print("   !git push origin main")
+
+    print()
+    print("=" * 70)
     print("Next steps:")
     print("  1. Check WandB dashboard for detailed metrics")
-    print("  2. Download model:")
+    print("  2. Download model from DVC (on local machine):")
     print()
+    print("     git pull")
+    print("     dvc pull  # Pulls all tracked models")
+    print()
+    print("  3. Or find and download specific files from Kaggle Output:")
+    print()
+    print("     # Find model location")
+    print("     !find . -name 'best.pt'")
+    print()
+    print("     # Download via FileLink (replace path)")
     print("     from IPython.display import FileLink")
-    print("     FileLink('weights/detection/best.pt')")
-    print()
-    print("  3. Push to DVC (optional):")
-    print("     !dvc add weights/detection/best.pt")
-    print("     !dvc push weights/detection/best.pt.dvc")
+    print("     FileLink('weights/detection/weights/best.pt')")
     print()
 else:
     print(" ❌ TRAINING FAILED!")
