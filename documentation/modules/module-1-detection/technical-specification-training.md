@@ -117,9 +117,9 @@ This document defines the technical architecture and workflow for training the *
 │                     │                                         │
 │  ┌──────────────────▼───────────────────────────────────┐   │
 │  │ Output Available for Download                         │   │
-│  │ - weights/detection/weights/best.pt (~45 MB)         │   │
-│  │ - weights/detection/metadata.json                    │   │
-│  │ - runs/detect/train/* (training logs, plots)        │   │
+│  │ - weights/detection/train/weights/best.pt (~45 MB)   │   │
+│  │ - weights/detection/train/*.csv, *.png (metrics)     │   │
+│  │ - weights/detection/test/ (test evaluation results)  │   │
 │  └─────────────────────────────────────────────────────────┘   │
 └────────────────────────┬───────────────────────────────────────┘
                          │
@@ -695,8 +695,8 @@ def train_detection_model(config_path: Path, experiment_name: str):
         'mosaic': det_config['augmentation']['mosaic'],
         
         # Output
-        'project': 'weights',
-        'name': 'detection',
+        'project': 'weights/detection',
+        'name': 'train',
         'exist_ok': True,
         'save': True,
         'save_period': 1,
@@ -757,17 +757,21 @@ if __name__ == '__main__':
 **Expected Output Structure:**
 ```
 weights/detection/
-├── weights/
-│   ├── best.pt      # Best checkpoint (highest mAP)
-│   └── last.pt      # Final epoch checkpoint
-├── args.yaml        # Training arguments
-├── results.csv      # Metrics per epoch
-├── results.png      # Training curves
-├── confusion_matrix.png
-├── F1_curve.png
-├── P_curve.png
-├── R_curve.png
-└── PR_curve.png
+├── train/                 # Training outputs
+│   ├── weights/
+│   │   ├── best.pt        # Best checkpoint (highest mAP)
+│   │   └── last.pt        # Final epoch checkpoint
+│   ├── args.yaml          # Training arguments
+│   ├── results.csv        # Metrics per epoch
+│   ├── results.png        # Training curves
+│   ├── confusion_matrix.png
+│   ├── F1_curve.png
+│   ├── P_curve.png
+│   ├── R_curve.png
+│   └── PR_curve.png
+└── test/                  # Test evaluation outputs
+    ├── predictions.json
+    └── confusion_matrix.png
 ```
 
 ### 5.4 Expected Training Time
@@ -829,28 +833,25 @@ with open('weights/detection/metadata.json', 'w') as f:
 
 2. **Add to DVC**
 ```bash
-# Add weights directory to DVC tracking
-dvc add weights/detection/best.pt
-dvc add weights/detection/metadata.json
+# Add trained model to DVC tracking
+dvc add weights/detection/train/weights/best.pt
 
 # This creates:
-# - weights/detection/best.pt.dvc
-# - weights/detection/metadata.json.dvc
+# - weights/detection/train/weights/best.pt.dvc
+# - weights/detection/train/weights/.gitignore
 ```
 
 3. **Push to Remote**
 ```bash
 # Push to Google Drive
-dvc push weights/detection/best.pt.dvc
-dvc push weights/detection/metadata.json.dvc
+dvc push weights/detection/train/weights/best.pt.dvc
 ```
 
 4. **Commit .dvc files**
 ```bash
 # Add .dvc files to git (to be committed manually or via API)
-git add weights/detection/best.pt.dvc
-git add weights/detection/metadata.json.dvc
-git add weights/detection/.gitignore  # Created by DVC
+git add weights/detection/train/weights/best.pt.dvc
+git add weights/detection/train/weights/.gitignore  # Created by DVC
 
 # Note: Actual commit happens outside Kaggle
 # User must pull these changes and commit locally
@@ -862,8 +863,8 @@ git add weights/detection/.gitignore  # Created by DVC
 
 **Automatic Handling (Step 9 in kaggle_training_notebook.py):**
 
-1. **Generate Metadata:** `src/detection/generate_metadata.py` creates `metadata.json`
-2. **DVC Add:** `dvc add weights/detection/best.pt`
+1. **Locate Outputs:** Finds model in `weights/detection/train/weights/best.pt`
+2. **DVC Add:** `dvc add weights/detection/train/weights/best.pt`
 3. **DVC Push:** `dvc push` → Model uploaded to Google Drive ✅
 4. **Git Commit:** Stages `.dvc` files and commits metadata
 5. **Git Push (Optional):** Pushes to GitHub if `GITHUB_TOKEN` configured
@@ -882,11 +883,11 @@ git add weights/detection/.gitignore  # Created by DVC
 git pull origin main
 
 # Pull trained model from DVC remote
-dvc pull weights/detection/best.pt.dvc
+dvc pull weights/detection/train/weights/best.pt.dvc
 
 # Verify model
-ls -lh weights/detection/best.pt
-python -c "from ultralytics import YOLO; m=YOLO('weights/detection/best.pt'); print(m.info())"
+ls -lh weights/detection/train/weights/best.pt
+python -c "from ultralytics import YOLO; m=YOLO('weights/detection/train/weights/best.pt'); print(m.info())"
 ```
 
 **No Manual Download Required** - Model automatically synced to Google Drive and accessible via `dvc pull`.
@@ -914,18 +915,18 @@ python -c "from ultralytics import YOLO; m=YOLO('weights/detection/best.pt'); pr
 git pull origin main
 
 # Step 2: Pull model from DVC remote (Google Drive)
-dvc pull weights/detection/best.pt.dvc
+dvc pull weights/detection/train/weights/best.pt.dvc
 
 # Step 3: Verify model
-ls -lh weights/detection/best.pt
-python -c "from ultralytics import YOLO; m=YOLO('weights/detection/best.pt'); print(m.info())"
+ls -lh weights/detection/train/weights/best.pt
+python -c "from ultralytics import YOLO; m=YOLO('weights/detection/train/weights/best.pt'); print(m.info())"
 ```
 
 **Expected Output:**
 ```
-A       weights/detection/best.pt
+A       weights/detection/train/weights/best.pt
 1 file added and 1 file fetched
--rw-r--r-- 1 user user 45M Dec 11 10:30 weights/detection/best.pt
+-rw-r--r-- 1 user user 45M Dec 11 10:30 weights/detection/train/weights/best.pt
 
 Model summary: 225 layers, 11,136,374 parameters, 0 gradients
 ```
@@ -960,11 +961,12 @@ type %USERPROFILE%\.gdrive\credentials.json  # Windows
 
 After sync, verify:
 
-- [ ] `weights/detection/best.pt` exists and is ~45 MB (YOLOv11s size)
+- [ ] `weights/detection/train/weights/best.pt` exists and is ~45 MB (YOLOv11s size)
 - [ ] Model loads successfully with Ultralytics
-- [ ] `metadata.json` contains expected metrics
+- [ ] `weights/detection/train/` contains training metrics (results.csv, *.png)
+- [ ] `weights/detection/test/` contains test evaluation results
 - [ ] WandB run shows complete training history
-- [ ] Test inference works: `yolo predict model=weights/detection/best.pt source=test_image.jpg`
+- [ ] Test inference works: `yolo predict model=weights/detection/train/weights/best.pt source=test_image.jpg`
 
 ---
 
@@ -1170,7 +1172,7 @@ tail -f /kaggle/working/train_output.log
 3. Copy entire `kaggle_training_notebook.py` content into single cell
 4. Run cell (estimated: 3-4 hours for 150 epochs)
 5. Verify output: Check WandB dashboard + DVC push logs
-6. Local access: `git pull && dvc pull weights/detection/best.pt.dvc`
+6. Local access: `git pull && dvc pull weights/detection/train/weights/best.pt.dvc`
 
 **For detailed step-by-step guide:** See `KAGGLE_TRAINING_GUIDE.md`
 
@@ -1227,7 +1229,7 @@ run("dvc pull data/processed/detection.dvc", "Pull dataset")
 run("python src/detection/train.py --config params.yaml", "Train model")
 
 # Step 9: Sync (Fully automated with session token)
-run("dvc add weights/detection/best.pt", "Track model")
+run("dvc add weights/detection/train/weights/best.pt", "Track model")
 run("dvc push", "Push to Google Drive")  # ✅ Now succeeds
 print("✓ Model uploaded to Google Drive")
 

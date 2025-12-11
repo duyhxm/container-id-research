@@ -93,10 +93,10 @@ Sau khi training xong, add cell mới:
 from IPython.display import FileLink
 
 # Download trained model
-FileLink('weights/detection/best.pt')
+FileLink('weights/detection/train/weights/best.pt')
 
-# Download metadata
-FileLink('weights/detection/metadata.json')
+# Download test results
+FileLink('weights/detection/test/')
 ```
 
 Click vào link để download về máy.
@@ -275,8 +275,8 @@ Sau khi training xong:
 3. 🏠 Trên máy local:
    ```bash
    git pull origin main
-   dvc pull weights/detection/best.pt.dvc
-   ls -lh weights/detection/best.pt
+   dvc pull weights/detection/train/weights/best.pt.dvc
+   ls -lh weights/detection/train/weights/best.pt
    ```
 4. **No manual download needed!** 🎉
 
@@ -381,8 +381,8 @@ ERROR: failed to pull data from the cloud
 - [ ] Verify DVC push succeeded (check Step 9 output logs)
 - [ ] Check WandB metrics
 - [ ] Verify Git push to GitHub (if GITHUB_TOKEN configured)
-- [ ] On local machine: `git pull && dvc pull weights/detection/best.pt.dvc`
-- [ ] Test model: `python -c "from ultralytics import YOLO; m=YOLO('weights/detection/best.pt'); print(m.info())"`
+- [ ] On local machine: `git pull && dvc pull weights/detection/train/weights/best.pt.dvc`
+- [ ] Test model: `python -c "from ultralytics import YOLO; m=YOLO('weights/detection/train/weights/best.pt'); print(m.info())"`
 
 ---
 

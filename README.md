@@ -279,7 +279,7 @@ dvc repro convert_localization
 python src/detection/train.py --config experiments/detection/exp001_baseline/config.yaml
 
 # Run inference
-python src/detection/inference.py --weights weights/detection/best.pt --source test_images/
+python src/detection/inference.py --weights weights/detection/train/weights/best.pt --source test_images/
 ```
 
 **Kaggle Training (Recommended):**
@@ -847,7 +847,7 @@ dvc repro convert_localization
 python src/detection/train.py --config experiments/detection/exp001_baseline/config.yaml
 
 # Chạy inference
-python src/detection/inference.py --weights weights/detection/best.pt --source test_images/
+python src/detection/inference.py --weights weights/detection/train/weights/best.pt --source test_images/
 ```
 
 #### Module 3: Định vị Mã số Container

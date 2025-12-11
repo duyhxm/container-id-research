@@ -101,10 +101,10 @@ def prepare_training_args(config: Dict[str, Any], data_yaml_abs: str) -> Dict[st
     train_cfg = config.get("training", {})
     aug_cfg = config.get("augmentation", {})
 
-    # Force output to weights/ directory for consistent checkpoint location
-    # This ensures trained models are always saved to weights/detection/
-    # regardless of WandB status, making it easier to find and download
-    project_name = "weights"
+    # Force output to weights/detection/train/ for clean directory structure
+    # This creates: weights/detection/train/weights/best.pt
+    # Separate from test outputs: weights/detection/test/
+    project_name = "weights/detection"
 
     # Load hardware configuration for multi-GPU support
     from pathlib import Path as ConfigPath
@@ -181,7 +181,7 @@ def prepare_training_args(config: Dict[str, Any], data_yaml_abs: str) -> Dict[st
         "copy_paste": aug_cfg.get("copy_paste", 0.0),
         # Output
         "project": project_name,
-        "name": "detection",
+        "name": "train",
         "exist_ok": True,
         "save": True,
         "save_period": 1,
@@ -315,7 +315,13 @@ def train_detection_model(
     # Evaluate on test set
     logger.info("Evaluating on test set...")
     test_metrics = model.val(
-        data=data_yaml_abs, split="test", save_json=True, plots=True
+        data=data_yaml_abs,
+        split="test",
+        save_json=True,
+        plots=True,
+        project="weights/detection",
+        name="test",
+        exist_ok=True,
     )
 
     # Log final metrics to WandB (with safe access to handle None results)

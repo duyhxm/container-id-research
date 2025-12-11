@@ -616,9 +616,9 @@ if ret_code == 0:
     print(" ✅ TRAINING COMPLETE!")
     print("=" * 70)
     print()
-    print("✓ Trained model: weights/detection/best.pt")
-    print("✓ Metadata: weights/detection/metadata.json")
-    print("✓ Training curves: weights/detection/results.png")
+    print("✓ Trained model: weights/detection/train/weights/best.pt")
+    print("✓ Test results: weights/detection/test/")
+    print("✓ Training curves: weights/detection/train/results.png")
     print()
 
     # ========================================================================
@@ -632,15 +632,18 @@ if ret_code == 0:
         from pathlib import Path
 
         # Ultralytics creates nested structure: {project}/{name}/weights/
-        # Our config: project="weights", name="detection"
-        # Actual output: weights/detection/weights/best.pt
-        output_base = Path("weights/detection")
+        # Our config: project="weights/detection", name="train"
+        # Actual output: weights/detection/train/weights/best.pt
+        output_base = Path("weights/detection/train")
         weights_subdir = output_base / "weights"
 
         # Check multiple possible output locations
         print("\n[9.1] Locating training outputs...")
-        print(f"  Checking primary: {weights_subdir}")
-        print(f"  Checking fallback: {output_base}")
+        print(
+            f"  Checking primary: {weights_subdir} (weights/detection/train/weights/)"
+        )
+        print(f"  Checking fallback: {output_base} (weights/detection/train/)")
+        print(f"  Checking legacy: weights/detection/weights/")
         print(f"  Checking runs/: runs/detect/train/weights/")
 
         # Find the actual output directory
@@ -651,6 +654,12 @@ if ret_code == 0:
         elif output_base.exists() and (output_base / "best.pt").exists():
             actual_weights_dir = output_base
             print(f"  ✓ Found outputs in: {output_base}")
+        elif (
+            Path("weights/detection/weights").exists()
+            and Path("weights/detection/weights/best.pt").exists()
+        ):
+            actual_weights_dir = Path("weights/detection/weights")
+            print(f"  ✓ Found outputs in legacy location: weights/detection/weights/")
         elif Path("runs/detect/train/weights").exists():
             actual_weights_dir = Path("runs/detect/train/weights")
             print(f"  ✓ Found outputs in: runs/detect/train/weights/")
@@ -751,12 +760,12 @@ if ret_code == 0:
                             print("📥 MANUAL DOWNLOAD REQUIRED:")
                             print("   1. Download model from Kaggle:")
                             print(
-                                "      - Click 'Output' tab → Navigate to weights/detection/weights/"
+                                "      - Click 'Output' tab → Navigate to weights/detection/train/weights/"
                             )
                             print("      - Download best.pt (~19MB)")
                             print("   2. Push from local machine:")
                             print(
-                                "      $ dvc push weights/detection/weights/best.pt.dvc"
+                                "      $ dvc push weights/detection/train/weights/best.pt.dvc"
                             )
                             print()
                             print(
@@ -780,9 +789,11 @@ if ret_code == 0:
                     print("  To push manually after training:")
                     print("  1. Download .dvc files from Kaggle Output")
                     print("  2. On local machine:")
-                    print("     git add weights/detection/weights/*.dvc .gitignore")
                     print(
-                        "     git add weights/detection/*.csv weights/detection/*.png"
+                        "     git add weights/detection/train/weights/*.dvc .gitignore"
+                    )
+                    print(
+                        "     git add weights/detection/train/*.csv weights/detection/train/*.png"
                     )
                     print(
                         "     git commit -m 'feat(detection): add trained model from Kaggle'"
@@ -889,7 +900,7 @@ if ret_code == 0:
         print("   !find . -name 'best.pt'")
         print()
         print("   # Then add to DVC (replace path if different):")
-        print("   !dvc add weights/detection/weights/best.pt")
+        print("   !dvc add weights/detection/train/weights/best.pt")
         print("   !dvc push")
         print()
         print("   # Commit to Git:")
