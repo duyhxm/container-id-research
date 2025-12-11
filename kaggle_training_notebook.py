@@ -175,16 +175,16 @@ try:
     from kaggle_secrets import UserSecretsClient
 
     user_secrets = UserSecretsClient()
-    
+
     # ==============================================================================
     # PREFERRED METHOD: Session Token Authentication (for personal Google Drive)
     # ==============================================================================
     # Session tokens allow DVC push/pull to personal Google Drive (read/write access)
     # Service Accounts cannot write to personal Drive (403 Forbidden error)
-    
+
     gdrive_credentials = None
     use_session_token = False
-    
+
     # Try to get session token first (RECOMMENDED for personal projects)
     try:
         gdrive_credentials = user_secrets.get_secret("GDRIVE_USER_CREDENTIALS")
@@ -193,54 +193,72 @@ try:
             use_session_token = True
     except Exception as e:
         print(f"⚠️  GDRIVE_USER_CREDENTIALS not found: {e}")
-    
+
     # Fallback to environment variable
     if not gdrive_credentials:
         gdrive_credentials = os.environ.get("GDRIVE_USER_CREDENTIALS", "")
         if gdrive_credentials:
             print("✓ Found GDRIVE_USER_CREDENTIALS (environment variable)")
             use_session_token = True
-    
+
     if use_session_token:
         print("\n🔐 Using DVC Session Token Authentication")
         print("   ✅ Supports: DVC pull + push to personal Google Drive")
         print("   ℹ️  Token expires: ~7 days (re-export if needed)")
-        
+
         # Validate JSON format
         try:
             creds_data = json.loads(gdrive_credentials)
-            
+
             # Check for required OAuth2 fields
-            required_fields = ["access_token", "refresh_token", "client_id", "client_secret"]
+            required_fields = [
+                "access_token",
+                "refresh_token",
+                "client_id",
+                "client_secret",
+            ]
             missing = [f for f in required_fields if f not in creds_data]
-            
+
             if missing:
                 print(f"⚠️  Session token missing fields: {missing}")
                 print("   This may still work if token is valid")
-            
+
             print("✓ Session token JSON validated")
-        
+
         except json.JSONDecodeError as e:
             print(f"❌ Invalid JSON format in GDRIVE_USER_CREDENTIALS: {e}")
-            print("💡 Ensure you copied the entire JSON from ~/.gdrive/credentials.json")
+            print(
+                "💡 Ensure you copied the entire JSON from ~/.gdrive/credentials.json"
+            )
             sys.exit(1)
-        
+
         # Create ~/.gdrive directory (DVC looks for credentials here)
         gdrive_dir = Path.home() / ".gdrive"
         gdrive_dir.mkdir(parents=True, exist_ok=True)
-        
+
         # Write credentials to ~/.gdrive/credentials.json
         credentials_path = gdrive_dir / "credentials.json"
         with open(credentials_path, "w") as f:
             f.write(gdrive_credentials)
         os.chmod(credentials_path, 0o600)
-        
+
         print(f"✓ Session token written to: {credentials_path}")
-        
-        # DVC will automatically detect and use ~/.gdrive/credentials.json
-        # No additional remote configuration needed
-        print("✓ DVC will auto-detect session token (no extra config needed)")
-    
+
+        # Configure DVC remote to use this credentials file
+        # This prevents DVC from trying to open browser for OAuth
+        print("✓ Configuring DVC remote to use session token...")
+        os.system(
+            f'dvc remote modify storage gdrive_user_credentials_file "{credentials_path}"'
+        )
+
+        # Ensure service account mode is disabled (conflict with user credentials)
+        os.system("dvc remote modify storage --unset gdrive_use_service_account")
+        os.system(
+            "dvc remote modify storage --unset gdrive_service_account_json_file_path"
+        )
+
+        print("✓ DVC configured to use session token (no browser needed)")
+
     else:
         # ==============================================================================
         # FALLBACK METHOD: Service Account Authentication (for shared/enterprise Drive)
@@ -248,9 +266,9 @@ try:
         print("\n⚠️  Session token not found, falling back to Service Account")
         print("   ⚠️  WARNING: Service Accounts CANNOT push to personal Google Drive")
         print("   ℹ️  For personal projects, use GDRIVE_USER_CREDENTIALS instead")
-        
+
         dvc_json = None
-        
+
         # Option 1: PRIMARY - Direct from Kaggle Secrets API
         try:
             dvc_json = user_secrets.get_secret("DVC_SERVICE_ACCOUNT_JSON")
@@ -258,23 +276,23 @@ try:
                 print("✓ Found DVC_SERVICE_ACCOUNT_JSON from Kaggle Secrets")
         except Exception as e:
             print(f"⚠️  Kaggle Secrets API error: {e}")
-        
+
         # Option 2: FALLBACK - Environment variable
         if not dvc_json:
             dvc_json = os.environ.get("DVC_SERVICE_ACCOUNT_JSON", "")
             if dvc_json:
                 print("✓ Found DVC_SERVICE_ACCOUNT_JSON (environment variable)")
-        
+
         # Option 3: LEGACY - Base64 encoded
         if not dvc_json:
             dvc_json_b64 = os.environ.get("DVC_SERVICE_ACCOUNT_JSON_B64", "")
             if not dvc_json_b64:
                 dvc_json_b64 = os.environ.get("KAGGLE_SECRET_DVC_JSON_B64", "")
-            
+
             if dvc_json_b64:
                 print("✓ Found base64-encoded DVC credentials (legacy)")
                 dvc_json = base64.b64decode(dvc_json_b64).decode("utf-8")
-        
+
         # If none found, exit with instructions
         if not dvc_json:
             print("❌ DVC credentials not found!")
@@ -294,11 +312,11 @@ try:
             print("   4. Value: Paste your Google Service Account JSON")
             print("   5. Toggle ON the secret for this notebook")
             sys.exit(1)
-        
+
         # Validate Service Account JSON
         try:
             sa_data = json.loads(dvc_json)
-            
+
             required_fields = [
                 "type",
                 "project_id",
@@ -307,29 +325,35 @@ try:
                 "client_email",
             ]
             missing = [f for f in required_fields if f not in sa_data]
-            
+
             if missing:
                 print(f"❌ Invalid Service Account JSON: Missing fields {missing}")
-                print("\n💡 Ensure you copied the COMPLETE JSON from Google Cloud Console")
+                print(
+                    "\n💡 Ensure you copied the COMPLETE JSON from Google Cloud Console"
+                )
                 sys.exit(1)
-            
+
             if sa_data.get("type") != "service_account":
-                print("❌ Invalid Service Account JSON: 'type' must be 'service_account'")
+                print(
+                    "❌ Invalid Service Account JSON: 'type' must be 'service_account'"
+                )
                 print(f"   Found: {sa_data.get('type')}")
                 sys.exit(1)
-            
+
             print("✓ Service Account JSON validated")
-        
+
         except json.JSONDecodeError as e:
             print(f"❌ Invalid JSON format in DVC_SERVICE_ACCOUNT_JSON: {e}")
-            print("💡 Ensure you copied the entire JSON content (including curly braces)")
+            print(
+                "💡 Ensure you copied the entire JSON content (including curly braces)"
+            )
             sys.exit(1)
-        
+
         # Write Service Account file
         with open("/tmp/dvc_service_account.json", "w") as f:
             f.write(dvc_json)
         os.chmod("/tmp/dvc_service_account.json", 0o600)
-        
+
         # Configure DVC to use Service Account
         os.system(
             "dvc remote modify storage gdrive_use_service_account true > /dev/null 2>&1"
@@ -337,9 +361,9 @@ try:
         os.system(
             "dvc remote modify storage gdrive_service_account_json_file_path /tmp/dvc_service_account.json > /dev/null 2>&1"
         )
-        
+
         print("✓ Service Account configured (DVC pull only - push will fail)")
-    
+
     print("\n✓ DVC credentials configured successfully")
 
 except Exception as e:
@@ -704,74 +728,38 @@ if ret_code == 0:
         from pathlib import Path
 
         # Ultralytics creates nested structure: {project}/{name}/weights/
-        # Our config: project="weights/detection", name="train"
-        # Actual output: weights/detection/train/weights/best.pt
-        output_base = Path("weights/detection/train")
-        weights_subdir = output_base / "weights"
+        # Our config: project="weights/detection", name="train" and name="test"
+        # Actual outputs:
+        #   - weights/detection/train/weights/best.pt (training checkpoint)
+        #   - weights/detection/test/ (test evaluation results)
 
-        # Check multiple possible output locations
-        print("\n[9.1] Locating training outputs...")
-        print(
-            f"  Checking primary: {weights_subdir} (weights/detection/train/weights/)"
-        )
-        print(f"  Checking fallback: {output_base} (weights/detection/train/)")
-        print(f"  Checking legacy: weights/detection/weights/")
-        print(f"  Checking runs/: runs/detect/train/weights/")
+        # Define directories to scan
+        output_dirs = [
+            Path("weights/detection/train"),
+            Path("weights/detection/test"),
+            Path("weights/detection/weights"),  # Legacy location
+            Path("runs/detect/train"),  # Alternative Ultralytics default
+        ]
 
-        # Find the actual output directory
-        actual_weights_dir = None
-        if weights_subdir.exists() and (weights_subdir / "best.pt").exists():
-            actual_weights_dir = weights_subdir
-            print(f"  ✓ Found outputs in: {weights_subdir}")
-        elif output_base.exists() and (output_base / "best.pt").exists():
-            actual_weights_dir = output_base
-            print(f"  ✓ Found outputs in: {output_base}")
-        elif (
-            Path("weights/detection/weights").exists()
-            and Path("weights/detection/weights/best.pt").exists()
-        ):
-            actual_weights_dir = Path("weights/detection/weights")
-            print(f"  ✓ Found outputs in legacy location: weights/detection/weights/")
-        elif Path("runs/detect/train/weights").exists():
-            actual_weights_dir = Path("runs/detect/train/weights")
-            print(f"  ✓ Found outputs in: runs/detect/train/weights/")
+        print("\n[9.1] Locating training outputs (train + test)...")
 
-        if not actual_weights_dir:
+        # Collect all existing output directories
+        existing_dirs = []
+        for output_dir in output_dirs:
+            if output_dir.exists():
+                existing_dirs.append(output_dir)
+                print(f"  ✓ Found directory: {output_dir}")
+
+        if not existing_dirs:
             print("⚠️  No training outputs found, skipping sync")
             print("   Training may have failed or outputs saved elsewhere")
         else:
-            # Scan for actual output files
-            print(f"\n[9.2] Scanning files in {actual_weights_dir}...")
+            print(f"\n[9.2] Scanning files across {len(existing_dirs)} directories...")
 
-            # Model weights (for DVC)
-            # Only track best.pt (most important checkpoint)
-            # Skip epoch*.pt (saves DVC storage, rarely needed)
+            # Model weights (for DVC) - only best.pt files
             model_files = []
-            if (actual_weights_dir / "best.pt").exists():
-                model_path = str(actual_weights_dir / "best.pt")
-                model_files.append(model_path)
-                size_mb = (actual_weights_dir / "best.pt").stat().st_size / (1024**2)
-                print(f"  ✓ Found: best.pt ({size_mb:.2f} MB)")
 
-            # Check for epoch checkpoints (informational only, not tracked)
-            epoch_checkpoints = list(actual_weights_dir.glob("epoch*.pt"))
-            if epoch_checkpoints:
-                total_size_mb = sum(f.stat().st_size for f in epoch_checkpoints) / (
-                    1024**2
-                )
-                print(
-                    f"  ℹ️  Found {len(epoch_checkpoints)} epoch checkpoints ({total_size_mb:.1f} MB total)"
-                )
-                print(
-                    f"     → Skipping epoch*.pt (use best.pt for deployment)"
-                )  # Training artifacts (for Git) - lightweight, useful files
-            # Look in parent directory (one level up from weights/)
-            artifacts_dir = (
-                actual_weights_dir.parent
-                if actual_weights_dir.name == "weights"
-                else actual_weights_dir
-            )
-
+            # Artifacts for Git (CSV, PNG, YAML files)
             git_artifacts = []
             artifact_patterns = [
                 "results.csv",  # Metrics per epoch
@@ -784,13 +772,56 @@ if ret_code == 0:
                 "args.yaml",  # Training arguments
             ]
 
-            print(f"  Looking for artifacts in: {artifacts_dir}")
-            for artifact in artifact_patterns:
-                artifact_path = artifacts_dir / artifact
-                if artifact_path.exists():
-                    git_artifacts.append(str(artifact_path))
-                    size_kb = artifact_path.stat().st_size / 1024
-                    print(f"  ✓ Found: {artifact} ({size_kb:.1f} KB)")
+            # Scan each directory
+            for output_dir in existing_dirs:
+                print(f"\n  Scanning: {output_dir}")
+
+                # Look for best.pt in current dir and weights/ subdir
+                locations_to_check = [
+                    output_dir / "best.pt",
+                    output_dir / "weights" / "best.pt",
+                ]
+
+                for best_pt_path in locations_to_check:
+                    if best_pt_path.exists():
+                        model_path = str(best_pt_path)
+                        if model_path not in model_files:  # Avoid duplicates
+                            model_files.append(model_path)
+                            size_mb = best_pt_path.stat().st_size / (1024**2)
+                            print(f"    ✓ Found model: best.pt ({size_mb:.2f} MB)")
+
+                # Check for epoch checkpoints (informational only, not tracked)
+                for weights_dir in [output_dir, output_dir / "weights"]:
+                    if weights_dir.exists():
+                        epoch_checkpoints = list(weights_dir.glob("epoch*.pt"))
+                        if epoch_checkpoints:
+                            total_size_mb = sum(
+                                f.stat().st_size for f in epoch_checkpoints
+                            ) / (1024**2)
+                            print(
+                                f"    ℹ️  Found {len(epoch_checkpoints)} epoch checkpoints ({total_size_mb:.1f} MB)"
+                            )
+                            print(
+                                f"       → Skipping epoch*.pt (use best.pt for deployment)"
+                            )
+                            break  # Only report once
+
+                # Look for artifacts in current directory
+                for artifact in artifact_patterns:
+                    artifact_path = output_dir / artifact
+                    if artifact_path.exists():
+                        artifact_str = str(artifact_path)
+                        if artifact_str not in git_artifacts:  # Avoid duplicates
+                            git_artifacts.append(artifact_str)
+                            size_kb = artifact_path.stat().st_size / 1024
+                            print(
+                                f"    ✓ Found artifact: {artifact} ({size_kb:.1f} KB)"
+                            )
+
+            # Summary
+            print(f"\n  Summary:")
+            print(f"    Models for DVC: {len(model_files)} file(s)")
+            print(f"    Artifacts for Git: {len(git_artifacts)} file(s)")
 
             if not model_files and not git_artifacts:
                 print("⚠️  No training outputs found, skipping sync")
@@ -861,11 +892,9 @@ if ret_code == 0:
                     print("  To push manually after training:")
                     print("  1. Download .dvc files from Kaggle Output")
                     print("  2. On local machine:")
+                    print("     git add weights/detection/**/*.dvc .gitignore")
                     print(
-                        "     git add weights/detection/train/weights/*.dvc .gitignore"
-                    )
-                    print(
-                        "     git add weights/detection/train/*.csv weights/detection/train/*.png"
+                        "     git add weights/detection/**/*.csv weights/detection/**/*.png"
                     )
                     print(
                         "     git commit -m 'feat(detection): add trained model from Kaggle'"
@@ -901,12 +930,13 @@ if ret_code == 0:
                     if files_to_commit:
                         # Commit with descriptive message
                         model_names = [Path(f).name for f in model_files]
+                        model_locations = [str(Path(f).parent) for f in model_files]
                         commit_msg = (
                             f"feat(detection): add trained YOLOv11s model and artifacts\\n\\n"
                             f"Experiment: {EXPERIMENT_NAME}\\n"
-                            f"Output location: {actual_weights_dir}\\n"
+                            f"Output directories: {', '.join(set(model_locations))}\\n"
                             f"Models: {', '.join(model_names)}\\n"
-                            f"Artifacts: {len(git_artifacts)} files (metrics, curves)\\n"
+                            f"Artifacts: {len(git_artifacts)} files (train + test results)\\n"
                             f"DVC tracking: {len([f for f in files_to_commit if '.dvc' in f])} .dvc files\\n\\n"
                             f"Training completed on Kaggle GPU environment"
                         )
@@ -916,17 +946,24 @@ if ret_code == 0:
                             print("✓ Committed to Git")
 
                             # Step 9.6: Create new branch and push
-                            print("\n[9.6] Creating new branch and pushing to GitHub...")
-                            
+                            print(
+                                "\n[9.6] Creating new branch and pushing to GitHub..."
+                            )
+
                             # Generate branch name from experiment name and timestamp
                             from datetime import datetime
+
                             timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
                             # Sanitize experiment name for branch name (replace spaces/special chars)
-                            safe_exp_name = EXPERIMENT_NAME.replace(" ", "-").replace("_", "-").lower()
+                            safe_exp_name = (
+                                EXPERIMENT_NAME.replace(" ", "-")
+                                .replace("_", "-")
+                                .lower()
+                            )
                             branch_name = f"kaggle-training-{safe_exp_name}-{timestamp}"
-                            
+
                             print(f"  Creating branch: {branch_name}")
-                            
+
                             # Create and checkout new branch
                             ret_branch = os.system(f"git checkout -b {branch_name}")
                             if ret_branch != 0:
@@ -934,25 +971,39 @@ if ret_code == 0:
                                 print("     Trying to push to current branch instead")
                                 # Get current branch name
                                 import subprocess
+
                                 try:
-                                    current_branch = subprocess.check_output(
-                                        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-                                        stderr=subprocess.DEVNULL
-                                    ).decode().strip()
+                                    current_branch = (
+                                        subprocess.check_output(
+                                            [
+                                                "git",
+                                                "rev-parse",
+                                                "--abbrev-ref",
+                                                "HEAD",
+                                            ],
+                                            stderr=subprocess.DEVNULL,
+                                        )
+                                        .decode()
+                                        .strip()
+                                    )
                                     branch_name = current_branch
                                     print(f"  Using current branch: {branch_name}")
                                 except:
                                     branch_name = "main"
                                     print(f"  Falling back to: {branch_name}")
                             else:
-                                print(f"  ✓ Created and checked out branch: {branch_name}")
-                            
+                                print(
+                                    f"  ✓ Created and checked out branch: {branch_name}"
+                                )
+
                             # Push to new branch
                             print(f"\n  Pushing to origin/{branch_name}...")
                             ret = os.system(f"git push -u origin {branch_name}")
 
                             if ret == 0:
-                                print(f"✓ Pushed to GitHub successfully (branch: {branch_name})")
+                                print(
+                                    f"✓ Pushed to GitHub successfully (branch: {branch_name})"
+                                )
                                 print()
                                 print("=" * 70)
                                 print(" ✨ SYNC COMPLETE!")
@@ -963,7 +1014,7 @@ if ret_code == 0:
                                     f"  1. ✓ Model weights ({len(model_files)} files): DVC remote (Google Drive)"
                                 )
                                 print(
-                                    f"  2. ✓ Training artifacts ({len(git_artifacts)} files): GitHub repository"
+                                    f"  2. ✓ Train + Test artifacts ({len(git_artifacts)} files): GitHub repository"
                                 )
                                 print(
                                     f"  3. ✓ DVC metadata (.dvc files): GitHub repository"
@@ -971,12 +1022,17 @@ if ret_code == 0:
                                 print()
                                 print(f"📌 Branch: {branch_name}")
                                 print()
+                                print("📂 Pushed directories:")
+                                print(
+                                    "  - weights/detection/train/  (training outputs)"
+                                )
+                                print("  - weights/detection/test/   (test evaluation)")
+                                print()
                                 print("To download on local machine:")
                                 print(f"  $ git fetch origin {branch_name}")
                                 print(f"  $ git checkout {branch_name}")
                                 if model_files:
-                                    first_dvc = f"{model_files[0]}.dvc"
-                                    print(f'  $ dvc pull "{first_dvc}"')
+                                    print(f"  $ dvc pull  # Pulls all model weights")
                                 print()
                                 print("To merge into main:")
                                 print("  $ git checkout main")
@@ -1008,17 +1064,19 @@ if ret_code == 0:
         print("   Training completed successfully, but automatic sync failed")
         print("   You can manually sync with:")
         print()
-        print("   # Find your model file first:")
-        print("   !find . -name 'best.pt'")
+        print("   # Find model files first:")
+        print("   !find weights/detection -name 'best.pt'")
         print()
-        print("   # Then add to DVC (replace path if different):")
+        print("   # Add all models to DVC:")
         print("   !dvc add weights/detection/train/weights/best.pt")
+        print("   !dvc add weights/detection/test/best.pt  # If exists")
         print("   !dvc push")
         print()
-        print("   # Commit to Git:")
-        print("   !git add weights/detection/weights/*.dvc .gitignore")
-        print("   !git add weights/detection/*.csv weights/detection/*.png")
-        print("   !git commit -m 'feat(detection): add trained model'")
+        print("   # Commit to Git (metadata + artifacts):")
+        print("   !git add weights/detection/**/*.dvc .gitignore")
+        print("   !git add weights/detection/train/*.{csv,png,yaml}")
+        print("   !git add weights/detection/test/*.{csv,png,yaml}")
+        print("   !git commit -m 'feat(detection): add trained model (train + test)'")
         print("   !git push origin main")
 
     print()
@@ -1034,12 +1092,17 @@ if ret_code == 0:
     print()
     print("  3. Or find and download specific files from Kaggle Output:")
     print()
-    print("     # Find model location")
-    print("     !find . -name 'best.pt'")
+    print("     # Find all model files")
+    print("     !find weights/detection -name 'best.pt'")
     print()
-    print("     # Download via FileLink (replace path)")
+    print("     # Download via FileLink")
     print("     from IPython.display import FileLink")
-    print("     FileLink('weights/detection/weights/best.pt')")
+    print(
+        "     FileLink('weights/detection/train/weights/best.pt')  # Training checkpoint"
+    )
+    print(
+        "     # FileLink('weights/detection/test/best.pt')  # If test checkpoint exists"
+    )
     print()
 else:
     print(" ❌ TRAINING FAILED!")
