@@ -407,10 +407,10 @@ python scripts/export_models.py --module detection --version v1.0
 
 _(To be updated as training progresses)_
 
-| Module | Model | mAP@50 | mAP@50-95 | Inference Time | Size |
-|--------|-------|--------|-----------|----------------|------|
-| Door Detection | YOLOv11n | TBD | TBD | TBD | TBD |
-| ID Localization | YOLOv11-Pose | TBD | TBD | TBD | TBD |
+| Module          | Model        | mAP@50 | mAP@50-95 | Inference Time | Size |
+| --------------- | ------------ | ------ | --------- | -------------- | ---- |
+| Door Detection  | YOLOv11n     | TBD    | TBD       | TBD            | TBD  |
+| ID Localization | YOLOv11-Pose | TBD    | TBD       | TBD            | TBD  |
 
 ---
 
@@ -966,10 +966,10 @@ python scripts/export_models.py --module detection --version v1.0
 
 _(Sẽ được cập nhật khi quá trình training hoàn thành)_
 
-| Module | Model | mAP@50 | mAP@50-95 | Thời gian Inference | Kích thước |
-|--------|-------|--------|-----------|---------------------|-----------|
-| Phát hiện Cửa | YOLOv11n | TBD | TBD | TBD | TBD |
-| Định vị ID | YOLOv11-Pose | TBD | TBD | TBD | TBD |
+| Module        | Model        | mAP@50 | mAP@50-95 | Thời gian Inference | Kích thước |
+| ------------- | ------------ | ------ | --------- | ------------------- | ---------- |
+| Phát hiện Cửa | YOLOv11n     | TBD    | TBD       | TBD                 | TBD        |
+| Định vị ID    | YOLOv11-Pose | TBD    | TBD       | TBD                 | TBD        |
 
 ---
 

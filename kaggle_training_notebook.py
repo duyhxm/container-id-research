@@ -278,6 +278,83 @@ except Exception as e:
     sys.exit(1)
 
 # ============================================================================
+# Step 3.5: Configure Git credentials for GitHub push
+# ============================================================================
+print("\n[3.5/9] Configuring Git credentials...")
+
+try:
+    from kaggle_secrets import UserSecretsClient
+
+    user_secrets = UserSecretsClient()
+    github_token = None
+
+    # Get GitHub Personal Access Token from Kaggle Secrets
+    try:
+        github_token = user_secrets.get_secret("GITHUB_TOKEN")
+        if github_token:
+            print("✓ Found GITHUB_TOKEN from Kaggle Secrets")
+    except Exception as e:
+        print(f"⚠️  Kaggle Secrets API error: {e}")
+
+    # Fallback to environment variable
+    if not github_token:
+        github_token = os.environ.get("GITHUB_TOKEN", "")
+        if github_token:
+            print("✓ Found GITHUB_TOKEN (environment variable)")
+
+    if not github_token:
+        print("⚠️  GitHub token not found")
+        print("   Step 9 (Git push) will be SKIPPED")
+        print("   Training will complete, but you'll need to manually push to GitHub")
+        print()
+        print("📋 To enable automatic Git push:")
+        print("   1. Create GitHub Personal Access Token:")
+        print("      - Go to: https://github.com/settings/tokens")
+        print("      - Click 'Generate new token (classic)'")
+        print("      - Select scopes: 'repo' (full control of private repositories)")
+        print("      - Click 'Generate token' and COPY the token")
+        print("   2. Add to Kaggle Secrets:")
+        print("      - Notebook → Add-ons → Secrets → + Add a new secret")
+        print("      - Label: GITHUB_TOKEN")
+        print("      - Value: Paste your token (starts with ghp_...)")
+        print("      - Toggle ON for this notebook")
+        print("   3. Restart kernel and re-run")
+        print()
+        # Set flag to skip git push later
+        os.environ["SKIP_GIT_PUSH"] = "1"
+    else:
+        # Configure git to use token for HTTPS authentication
+        # Format: https://<token>@github.com/user/repo.git
+        github_username = os.environ.get(
+            "GITHUB_USERNAME", "duyhxm"
+        )  # Default from repo
+
+        # Configure git credentials
+        ret = os.system(f"git config --global credential.helper store > /dev/null 2>&1")
+
+        # Set remote URL with embedded token (will be used for push)
+        repo_url = f"https://{github_token}@github.com/{github_username}/container-id-research.git"
+        os.system(f"git remote set-url origin {repo_url} > /dev/null 2>&1")
+
+        # Set git user identity (required for commits)
+        os.system(
+            'git config --global user.email "kaggle-bot@kaggle.com" > /dev/null 2>&1'
+        )
+        os.system(
+            'git config --global user.name "Kaggle Training Bot" > /dev/null 2>&1'
+        )
+
+        print("✓ Git credentials configured successfully")
+        print(
+            f"  Remote: https://github.com/{github_username}/container-id-research.git"
+        )
+
+except Exception as e:
+    print(f"⚠️  Git configuration error: {e}")
+    print("   Continuing without Git push capability")
+    os.environ["SKIP_GIT_PUSH"] = "1"
+
+# ============================================================================
 # Step 4: Configure WandB
 # ============================================================================
 print("\n[4/9] Configuring WandB...")
@@ -655,98 +732,149 @@ if ret_code == 0:
 
                     if dvc_success:
                         print("\n[9.4] Pushing models to Google Drive...")
+                        print(
+                            "⚠️  Note: Service Accounts cannot upload to personal Google Drive"
+                        )
+                        print("   If push fails with quotaExceeded error:")
+                        print("   → Download model from Kaggle Output tab")
+                        print(
+                            "   → Push manually from local machine (see KAGGLE_MODEL_DOWNLOAD_GUIDE.md)"
+                        )
+                        print()
                         ret = os.system("dvc push")
 
                         if ret == 0:
                             print("✓ Models pushed to DVC remote (Google Drive)")
                         else:
-                            print("⚠️  DVC push failed (check Google Drive permissions)")
-                            print("   You can manually push later with: dvc push")
+                            print("⚠️  DVC push failed")
+                            print()
+                            print("📥 MANUAL DOWNLOAD REQUIRED:")
+                            print("   1. Download model from Kaggle:")
+                            print(
+                                "      - Click 'Output' tab → Navigate to weights/detection/weights/"
+                            )
+                            print("      - Download best.pt (~19MB)")
+                            print("   2. Push from local machine:")
+                            print(
+                                "      $ dvc push weights/detection/weights/best.pt.dvc"
+                            )
+                            print()
+                            print(
+                                "   See: KAGGLE_MODEL_DOWNLOAD_GUIDE.md for detailed steps"
+                            )
                 else:
                     print("\n⚠️  No model weights found (best.pt)")
                     print("     Training may have failed or checkpoint not saved")
 
-                # Step 9.4: Git Add & Commit (DVC metadata + training artifacts)
-                print("\n[9.5] Committing to Git...")
+                # Step 9.5: Git Add & Commit (DVC metadata + training artifacts)
+                # Check if Git push is available
+                skip_git = os.environ.get("SKIP_GIT_PUSH") == "1"
 
-                # Stage all relevant files
-                files_to_commit = []
-
-                # DVC metadata files (.dvc)
-                for model_file in model_files:
-                    dvc_file = f"{model_file}.dvc"
-                    if Path(dvc_file).exists():
-                        os.system(f'git add "{dvc_file}"')
-                        files_to_commit.append(dvc_file)
-                        print(f"  ✓ Staged: {dvc_file}")
-
-                # .gitignore (updated by DVC)
-                if Path(".gitignore").exists():
-                    os.system('git add ".gitignore"')
-                    files_to_commit.append(".gitignore")
-                    print(f"  ✓ Staged: .gitignore")
-
-                # Training artifacts (CSV, PNG, YAML)
-                for artifact in git_artifacts:
-                    os.system(f'git add "{artifact}"')
-                    files_to_commit.append(artifact)
-                    artifact_name = Path(artifact).name
-                    print(f"  ✓ Staged: {artifact_name}")
-
-                if files_to_commit:
-                    # Commit with descriptive message
-                    model_names = [Path(f).name for f in model_files]
-                    commit_msg = (
-                        f"feat(detection): add trained YOLOv11s model and artifacts\\n\\n"
-                        f"Experiment: {EXPERIMENT_NAME}\\n"
-                        f"Output location: {actual_weights_dir}\\n"
-                        f"Models: {', '.join(model_names)}\\n"
-                        f"Artifacts: {len(git_artifacts)} files (metrics, curves)\\n"
-                        f"DVC tracking: {len([f for f in files_to_commit if '.dvc' in f])} .dvc files\\n\\n"
-                        f"Training completed on Kaggle GPU environment"
+                if skip_git:
+                    print("\n[9.5] Git push SKIPPED (no GitHub token configured)")
+                    print("  ⚠️  DVC metadata and artifacts NOT committed to GitHub")
+                    print(
+                        "  ℹ️  Your model is in Google Drive (DVC), but metadata is local only"
                     )
-                    ret = os.system(f'git commit -m "{commit_msg}"')
+                    print()
+                    print("  To push manually after training:")
+                    print("  1. Download .dvc files from Kaggle Output")
+                    print("  2. On local machine:")
+                    print("     git add weights/detection/weights/*.dvc .gitignore")
+                    print(
+                        "     git add weights/detection/*.csv weights/detection/*.png"
+                    )
+                    print(
+                        "     git commit -m 'feat(detection): add trained model from Kaggle'"
+                    )
+                    print("     git push origin main")
+                else:
+                    print("\n[9.5] Committing to Git...")
 
-                    if ret == 0:
-                        print("✓ Committed to Git")
+                    # Stage all relevant files
+                    files_to_commit = []
 
-                        # Step 9.5: Git Push
-                        print("\n[9.6] Pushing to GitHub...")
-                        ret = os.system("git push origin main")
+                    # DVC metadata files (.dvc)
+                    for model_file in model_files:
+                        dvc_file = f"{model_file}.dvc"
+                        if Path(dvc_file).exists():
+                            os.system(f'git add "{dvc_file}"')
+                            files_to_commit.append(dvc_file)
+                            print(f"  ✓ Staged: {dvc_file}")
+
+                    # .gitignore (updated by DVC)
+                    if Path(".gitignore").exists():
+                        os.system('git add ".gitignore"')
+                        files_to_commit.append(".gitignore")
+                        print(f"  ✓ Staged: .gitignore")
+
+                    # Training artifacts (CSV, PNG, YAML)
+                    for artifact in git_artifacts:
+                        os.system(f'git add "{artifact}"')
+                        files_to_commit.append(artifact)
+                        artifact_name = Path(artifact).name
+                        print(f"  ✓ Staged: {artifact_name}")
+
+                    if files_to_commit:
+                        # Commit with descriptive message
+                        model_names = [Path(f).name for f in model_files]
+                        commit_msg = (
+                            f"feat(detection): add trained YOLOv11s model and artifacts\\n\\n"
+                            f"Experiment: {EXPERIMENT_NAME}\\n"
+                            f"Output location: {actual_weights_dir}\\n"
+                            f"Models: {', '.join(model_names)}\\n"
+                            f"Artifacts: {len(git_artifacts)} files (metrics, curves)\\n"
+                            f"DVC tracking: {len([f for f in files_to_commit if '.dvc' in f])} .dvc files\\n\\n"
+                            f"Training completed on Kaggle GPU environment"
+                        )
+                        ret = os.system(f'git commit -m "{commit_msg}"')
 
                         if ret == 0:
-                            print("✓ Pushed to GitHub successfully")
-                            print()
-                            print("=" * 70)
-                            print(" ✨ SYNC COMPLETE!")
-                            print("=" * 70)
-                            print()
-                            print("Your trained model is now accessible:")
-                            print(
-                                f"  1. ✓ Model weights ({len(model_files)} files): DVC remote (Google Drive)"
-                            )
-                            print(
-                                f"  2. ✓ Training artifacts ({len(git_artifacts)} files): GitHub repository"
-                            )
-                            print(
-                                f"  3. ✓ DVC metadata (.dvc files): GitHub repository"
-                            )
-                            print()
-                            print("To download on local machine:")
-                            print("  $ git pull")
-                            if model_files:
-                                first_dvc = f"{model_files[0]}.dvc"
-                                print(f'  $ dvc pull "{first_dvc}"')
-                            print()
+                            print("✓ Committed to Git")
+
+                            # Step 9.6: Git Push
+                            print("\n[9.6] Pushing to GitHub...")
+                            ret = os.system("git push origin main")
+
+                            if ret == 0:
+                                print("✓ Pushed to GitHub successfully")
+                                print()
+                                print("=" * 70)
+                                print(" ✨ SYNC COMPLETE!")
+                                print("=" * 70)
+                                print()
+                                print("Your trained model is now accessible:")
+                                print(
+                                    f"  1. ✓ Model weights ({len(model_files)} files): DVC remote (Google Drive)"
+                                )
+                                print(
+                                    f"  2. ✓ Training artifacts ({len(git_artifacts)} files): GitHub repository"
+                                )
+                                print(
+                                    f"  3. ✓ DVC metadata (.dvc files): GitHub repository"
+                                )
+                                print()
+                                print("To download on local machine:")
+                                print("  $ git pull")
+                                if model_files:
+                                    first_dvc = f"{model_files[0]}.dvc"
+                                    print(f'  $ dvc pull "{first_dvc}"')
+                                print()
+                            else:
+                                print("⚠️  Git push failed (check authentication)")
+                                print("   Possible causes:")
+                                print("   - GitHub token expired or invalid")
+                                print("   - Network connectivity issues")
+                                print("   - Repository access denied")
+                                print()
+                                print("   You can manually push later with:")
+                                print("   $ git push origin main")
                         else:
-                            print("⚠️  Git push failed (check authentication)")
                             print(
-                                "   You can manually push later with: git push origin main"
+                                "⚠️  Git commit failed (may have no changes to commit)"
                             )
                     else:
-                        print("⚠️  Git commit failed (may have no changes to commit)")
-                else:
-                    print("⚠️  No files to commit")
+                        print("⚠️  No files to commit")
 
     except Exception as e:
         print(f"⚠️  Sync error: {e}")

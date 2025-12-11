@@ -1,8 +1,9 @@
 # Kaggle Training Workflow - Module 1 Detection
 
-**Version:** 2.0 (Updated December 2024)  
+**Version:** 2.1 (Updated December 11, 2024)  
 **Status:** Current Standard  
-**Previous Method:** SSH Tunnel (Deprecated)
+**Previous Method:** SSH Tunnel (Deprecated)  
+**Latest Update:** DVC Session Token Authentication
 
 ---
 
@@ -97,6 +98,11 @@ This document describes the **current standard workflow** for training YOLOv11 m
    - Latest `pyproject.toml` with dependencies
    - Training scripts in `src/detection/`
 
+3. **DVC Session Token** (NEW - replaces Service Account)
+   - Exported from local machine (`~/.gdrive/credentials.json`)
+   - Added to Kaggle Secret: `GDRIVE_CREDENTIALS_DATA`
+   - See detailed setup in Section "Known Limitations & Workarounds"
+
 ### Step-by-Step Workflow
 
 #### 1. Create Kaggle Notebook
@@ -115,8 +121,9 @@ This document describes the **current standard workflow** for training YOLOv11 m
 ```
 1. Click "Add-ons" → "Secrets"
 2. Enable these secrets for this notebook:
-   ☑ DVC_SERVICE_ACCOUNT_JSON
+   ☑ GDRIVE_CREDENTIALS_DATA  (DVC session token)
    ☑ WANDB_API_KEY
+   ☑ GITHUB_TOKEN (optional - for auto-push metadata)
 3. Close settings panel
 ```
 
@@ -222,6 +229,131 @@ dvc_json_b64 = os.environ.get('KAGGLE_SECRET_DVC_JSON_B64', '')
 - DVC credentials → Hard fail (cannot fetch dataset)
 - WandB credentials → Soft fail (training continues without logging)
 - Individual package install → Retry individually, warn if fail
+
+---
+
+## Known Limitations & Workarounds
+
+### DVC Authentication: Service Account → Session Token (Dec 11, 2024)
+
+#### Issue: Service Account Cannot Write to Personal Google Drive
+
+**Problem:**
+- Service Accounts can **read** from personal Google Drive ✅
+- Service Accounts **cannot write** to personal Google Drive ❌
+- Error: `403 Forbidden: Service Accounts do not have storage quota`
+
+**Impact:**
+- `dvc pull` works correctly on Kaggle
+- `dvc push` fails from Kaggle (models cannot be uploaded automatically)
+- Manual download workflow was required (deprecated approach)
+
+#### Solution: DVC Session Token Authentication
+
+**Approach:** Export OAuth session token from local machine and inject into Kaggle.
+
+**Setup Steps (One-Time):**
+
+1. **On Local Machine: Configure DVC Remote**
+   ```bash
+   cd container-id-research
+   
+   # If not already configured
+   dvc remote add -d storage gdrive://<your_google_drive_folder_id>
+   dvc remote modify storage gdrive_acknowledge_abuse true
+   ```
+
+2. **Trigger OAuth Authentication**
+   ```bash
+   # This will open browser for Google login
+   dvc pull
+   # OR
+   dvc push
+   ```
+   
+   → Sign in with your Google Account
+   → Grant permissions to DVC
+
+3. **Export Session Token**
+   ```bash
+   # Linux/macOS
+   cat ~/.gdrive/credentials.json
+   
+   # Windows PowerShell
+   type $env:USERPROFILE\.gdrive\credentials.json
+   
+   # Windows CMD
+   type %USERPROFILE%\.gdrive\credentials.json
+   ```
+
+4. **Copy JSON Content**
+   - Copy **entire JSON** (from `{` to `}`)
+   - Example structure:
+     ```json
+     {
+       "access_token": "ya29.a0AfH6...",
+       "client_id": "xxx.apps.googleusercontent.com",
+       "client_secret": "xxx",
+       "refresh_token": "1//0xxx",
+       "token_expiry": "2024-12-11T12:00:00Z",
+       ...
+     }
+     ```
+
+5. **Add to Kaggle Secret**
+   - Go to https://www.kaggle.com/settings
+   - Scroll to "Secrets" section
+   - Click "Add a new secret"
+   - Name: `GDRIVE_CREDENTIALS_DATA`
+   - Value: Paste entire JSON
+   - Click "Add Secret"
+
+**Workflow in kaggle_training_notebook.py:**
+```python
+# Step 3: DVC Configuration (session token)
+import os
+from kaggle_secrets import UserSecretsClient
+
+# Create .gdrive directory
+os.makedirs(os.path.expanduser("~/.gdrive"), exist_ok=True)
+
+# Write session token from Kaggle Secret
+dvc_creds = UserSecretsClient().get_secret("GDRIVE_CREDENTIALS_DATA")
+with open(os.path.expanduser("~/.gdrive/credentials.json"), "w") as f:
+    f.write(dvc_creds)
+
+print("✓ DVC session token configured")
+
+# Now dvc push/pull will work automatically!
+```
+
+**Benefits:**
+- ✅ `dvc pull` works (download dataset)
+- ✅ `dvc push` works (upload trained models) - **NEW!**
+- ✅ Fully automated workflow (no manual download needed)
+- ✅ Suitable for personal projects
+
+**Token Maintenance:**
+
+| Aspect                   | Details                                                   |
+| ------------------------ | --------------------------------------------------------- |
+| **Expiration**           | ~7 days (Google OAuth token TTL)                          |
+| **Refresh**              | Run `dvc pull` or `dvc push` on local machine to refresh  |
+| **Re-export**            | Copy `~/.gdrive/credentials.json` again after refresh     |
+| **Update Kaggle Secret** | Edit `GDRIVE_CREDENTIALS_DATA` secret with new JSON       |
+| **Symptom of expiry**    | `ERROR: Authentication required` or `failed to pull/push` |
+
+**Security Considerations:**
+- ⚠️ Session token grants **full Google Drive access** (not scoped like Service Account)
+- 🔒 Keep token secure (Kaggle Secrets are private to your account)
+- 🔄 Rotate token regularly (every 7 days automatic expiration helps)
+- ✅ Suitable for personal projects (not recommended for shared accounts)
+
+**Alternative: Google Workspace Shared Drive**
+- Enterprise feature (requires paid Google Workspace account)
+- Service Accounts can write to Shared Drives
+- More complex setup, higher cost
+- **Verdict:** Session token sufficient for personal research projects
 
 ---
 
@@ -592,8 +724,45 @@ if ret_code == 0:
 
 ---
 
+## Version History
+
+### Version 2.1 (December 11, 2024)
+**Major Update:** DVC Session Token Authentication
+
+**Changes:**
+- **DVC Authentication:** Replaced Service Account limitation documentation with session token solution
+  - Export `~/.gdrive/credentials.json` from local machine
+  - Add to Kaggle Secret: `GDRIVE_CREDENTIALS_DATA`
+  - Enables automatic `dvc push` from Kaggle (both pull and push work)
+- **Workflow Improvement:** Removed manual model download requirement
+  - Training now fully automated end-to-end
+  - Local sync simplified to: `git pull` → `dvc pull`
+- **Documentation:** Added comprehensive setup guide for session token
+- **Security:** Documented token expiration (~7 days) and refresh workflow
+
+**Impact:** Training workflow now **fully automated** with no manual download steps.
+
+### Version 2.0 (December 9, 2024)
+**Major Change:** Migration from SSH Tunnel to Direct Notebook Workflow
+
+**Changes:**
+- Deprecated SSH tunnel method (GPU driver incompatibility)
+- Introduced `kaggle_training_notebook.py` (single-cell execution)
+- Updated to use Kaggle Secrets API natively
+- Simplified dependency management (pyproject.toml → pip)
+- Documented Service Account DVC limitation (manual download workaround)
+
+**Impact:** Complete workflow redesign for better reliability and simplicity.
+
+### Version 1.0 (November 2024)
+- Initial SSH tunnel workflow documentation
+- cloudflared setup instructions
+- Poetry virtual environment on Kaggle
+
+---
+
 **Document Maintainer:** Module 1 Team  
-**Last Updated:** December 9, 2024  
+**Last Updated:** December 11, 2024  
 **Review Schedule:** After each major workflow change  
 **Feedback:** Open GitHub issue with tag `module-1-training`
 

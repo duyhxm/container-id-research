@@ -1929,12 +1929,12 @@ def generate_summary_markdown(
 
 ### Validation Set
 
-| Metric | Value |
-|--------|-------|
-| mAP@50 | {val_metrics['mAP50']:.4f} |
-| mAP@50-95 | {val_metrics['mAP50_95']:.4f} |
+| Metric    | Value                          |
+| --------- | ------------------------------ |
+| mAP@50    | {val_metrics['mAP50']:.4f}     |
+| mAP@50-95 | {val_metrics['mAP50_95']:.4f}  |
 | Precision | {val_metrics['precision']:.4f} |
-| Recall | {val_metrics['recall']:.4f} |
+| Recall    | {val_metrics['recall']:.4f}    |
 
 ---
 

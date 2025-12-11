@@ -4,8 +4,8 @@
 **Module:** Module 1 - Container Door Detection  
 **Model:** YOLOv11-Small  
 **Training Platform:** Kaggle Kernels (GPU)  
-**Version:** 1.0  
-**Last Updated:** 2024-12-07
+**Version:** 2.1 (DVC Session Token Authentication)  
+**Last Updated:** 2024-12-11
 
 ---
 
@@ -36,11 +36,12 @@ This document defines the technical architecture and workflow for training the *
 
 ### 1.2 Design Principles
 
-1. **Automation-First:** Minimize manual intervention through shell scripts
+1. **Automation-First:** Single-cell notebook execution minimizes manual steps
 2. **Reproducibility:** All configurations parameterized in `params.yaml`
-3. **Cloud-Native:** Designed for ephemeral Kaggle environment
-4. **Security:** Secrets managed via Kaggle Secrets API
-5. **SSH Remote Development:** Direct terminal access via cloudflared tunneling enables full IDE integration
+3. **Cloud-Native:** Designed for ephemeral Kaggle environment with direct notebook workflow
+4. **Security:** Secrets managed via Kaggle Secrets API (native integration)
+5. **Single-Cell Execution:** Complete training workflow (clone → install → train → sync) in one notebook cell
+6. **Native Kaggle Integration:** Leverages Kaggle Secrets API without environment variable injection complexity
 
 ### 1.3 Training Objectives
 
@@ -56,81 +57,94 @@ This document defines the technical architecture and workflow for training the *
 
 ### 2.1 System Overview
 
+> ⚠️ **Workflow Update (Dec 2024):** This specification describes the **Direct Notebook workflow** (current standard). The older SSH tunnel method is **deprecated** due to GPU driver incompatibility. See `documentation/archive/deprecated-ssh-method/` for historical reference.
+
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│                  Local Machine (Developer)                    │
+│             Kaggle Notebook (GPU Kernel - T4/P100)            │
 │                                                                │
 │  ┌──────────────────────────────────────────────────────┐   │
-│  │  VS Code / Cursor IDE                                 │   │
-│  │  - Full IDE features (debugging, linting, etc.)      │   │
-│  │  - SSH Remote extension                               │   │
-│  └──────────────────┬───────────────────────────────────┘   │
-└─────────────────────┼────────────────────────────────────────┘
-                      │ SSH via cloudflared tunnel
-                      │
-┌─────────────────────▼────────────────────────────────────────┐
-│                  Kaggle Kernel (GPU P100/T4)                  │
-│                                                                │
-│  ┌──────────────────────────────────────────────────────┐   │
-│  │ Phase 0: SSH Tunnel Setup (Notebook)                 │   │
-│  │ - Install cloudflared                                 │   │
-│  │ - Start SSH service                                   │   │
-│  │ - Inject Kaggle Secrets as environment variables     │   │
-│  │ - Expose tunnel URL for SSH connection               │   │
-│  └──────────────────┬───────────────────────────────────┘   │
-│                     │ Developer SSH connects               │
-│  ┌──────────────────▼───────────────────────────────────┐   │
-│  │ Phase 1: Environment Setup (SSH Terminal)            │   │
-│  │ - Run setup_kaggle.sh script                         │   │
-│  │ - Install dependencies (Ultralytics, DVC, WandB)     │   │
-│  │ - Configure DVC from env var: $KAGGLE_SECRET_DVC_JSON│   │
-│  │ - Authenticate WandB from env var                    │   │
+│  │ Step 0: GPU Verification                              │   │
+│  │ - Detect CUDA availability                            │   │
+│  │ - Display GPU info (Tesla T4/P100)                   │   │
+│  │ - Fail fast if no GPU detected                        │   │
 │  └──────────────────┬───────────────────────────────────┘   │
 │                     │                                         │
 │  ┌──────────────────▼───────────────────────────────────┐   │
-│  │ Phase 2: Data Acquisition (SSH Terminal)             │   │
-│  │ - Clone Git repository (code + configs)              │   │
-│  │ - Execute `dvc pull` to fetch processed dataset      │   │
-│  │ - Validate data integrity (images + labels)          │   │
+│  │ Step 1-2: Repository Setup                            │   │
+│  │ - Clone GitHub repository (git clone)                │   │
+│  │ - Install dependencies from pyproject.toml            │   │
+│  │   (pip install -e . --no-cache-dir)                  │   │
+│  │ - Verify installations (ultralytics, dvc, wandb)     │   │
 │  └──────────────────┬───────────────────────────────────┘   │
 │                     │                                         │
 │  ┌──────────────────▼───────────────────────────────────┐   │
-│  │ Phase 3: Model Training (SSH Terminal)               │   │
-│  │ - Run bash scripts/run_training.sh                   │   │
+│  │ Step 3-3.5: Configure Secrets (Kaggle Secrets API)   │   │
+│  │ - DVC: Read GDRIVE_CREDENTIALS_DATA secret           │   │
+│  │        Write to ~/.gdrive/credentials.json           │   │
+│  │        Configure DVC remote with session token       │   │
+│  │ - Git: Read GITHUB_TOKEN secret (OAuth format)       │   │
+│  │        Configure git credentials for auto-push       │   │
+│  │ - WandB: Read WANDB_API_KEY secret                   │   │
+│  │          Authenticate with wandb login               │   │
+│  └──────────────────┬───────────────────────────────────┘   │
+│                     │                                         │
+│  ┌──────────────────▼───────────────────────────────────┐   │
+│  │ Step 5: Data Acquisition                              │   │
+│  │ - Execute dvc pull data/processed/detection.dvc      │   │
+│  │ - Validate dataset structure (images + labels)       │   │
+│  │ - Verify data.yaml configuration                     │   │
+│  └──────────────────┬───────────────────────────────────┘   │
+│                     │                                         │
+│  ┌──────────────────▼───────────────────────────────────┐   │
+│  │ Step 6-8: Model Training                              │   │
 │  │ - Load YOLOv11s pretrained weights                   │   │
 │  │ - Initialize WandB run with experiment config        │   │
-│  │ - Execute training loop (with augmentation)          │   │
+│  │ - Execute training loop (params from params.yaml)    │   │
 │  │ - Log metrics to WandB (loss, mAP, precision, recall)│   │
-│  │ - Save checkpoints (best.pt, last.pt)                │   │
+│  │ - Save checkpoints to weights/detection/             │   │
+│  │   Output: best.pt, last.pt, results.csv             │   │
 │  └──────────────────┬───────────────────────────────────┘   │
 │                     │                                         │
 │  ┌──────────────────▼───────────────────────────────────┐   │
-│  │ Phase 4: Artifact Versioning (SSH Terminal)          │   │
-│  │ - Add trained model to DVC tracking                  │   │
-│  │ - Generate metadata JSON (metrics, hyperparameters)  │   │
-│  │ - Push artifacts to Google Drive via DVC             │   │
+│  │ Step 9: Artifact Versioning & Sync (Automatic)       │   │
+│  │ - Generate metadata.json                              │   │
+│  │ - Add best.pt to DVC tracking (dvc add)             │   │
+│  │ - Push model to Google Drive (dvc push) ✅           │   │
+│  │ - Git commit metadata files                          │   │
+│  │ - Git push to GitHub (if GITHUB_TOKEN configured)    │   │
 │  └──────────────────┬───────────────────────────────────┘   │
 │                     │                                         │
 │  ┌──────────────────▼───────────────────────────────────┐   │
-│  │ Phase 5: Finalization (SSH Terminal)                 │   │
-│  │ - Close WandB run                                     │   │
-│  │ - Generate training summary report                   │   │
+│  │ Output Available for Download                         │   │
+│  │ - weights/detection/weights/best.pt (~45 MB)         │   │
+│  │ - weights/detection/metadata.json                    │   │
+│  │ - runs/detect/train/* (training logs, plots)        │   │
 │  └─────────────────────────────────────────────────────────┘   │
 └────────────────────────┬───────────────────────────────────────┘
                          │
-                         ▼
-              ┌─────────────────────┐
-              │  Google Drive (DVC)  │
-              │  - Trained model     │
-              │  - Metadata          │
-              └──────────┬──────────┘
+                ┌────────▼────────┐
+                │  Google Drive   │  ← DVC Remote Storage
+                │  (DVC Remote)   │     (Auto-synced)
+                └────────┬────────┘
                          │
+                         │ dvc pull (to local machine)
                          ▼
               ┌─────────────────────┐
               │  Local Machine       │
-              │  git pull + dvc pull │
+              │  - git pull          │
+              │  - dvc pull          │
+              │  - Model ready!      │
               └─────────────────────┘
 ```
+
+**Key Workflow Characteristics:**
+
+1. **Single-Cell Execution:** All steps (Step 0-9) execute sequentially in one Kaggle notebook cell
+2. **Native Kaggle Secrets:** Uses Kaggle Secrets API directly (no environment variable injection)
+3. **GitHub Integration:** Automatic git push if GITHUB_TOKEN configured
+4. **Automatic DVC Push:** Model automatically pushed to Google Drive using session token authentication
+5. **Estimated Time:** 3-4 hours for 150 epochs on Tesla T4 (2x GPU)
 
 ### 2.2 Kaggle Ephemeral Environment Challenges
 
@@ -150,151 +164,88 @@ This document defines the technical architecture and workflow for training the *
 - **Problem:** Trained models lost when kernel stops
 - **Solution:** Push to DVC immediately after training completes
 
-**Challenge 5: Direct Terminal Access**
-- **Problem:** Kaggle doesn't provide SSH access by default
-- **Solution:** Use cloudflared to create secure SSH tunnel, enabling direct terminal access from local IDE
+**Challenge 5: DVC Authentication**
+- **Problem:** Service Accounts cannot write to personal Google Drive (403 error)
+- **Solution:** Use DVC session token exported from local machine (suitable for personal accounts)
 
 ### 2.3 Technology Stack
 
-| Component | Technology | Purpose |
-|-----------|-----------|---------|
-| Training Framework | Ultralytics YOLOv11 | Object detection model |
-| Data Versioning | DVC 3.x | Dataset and model versioning |
-| Experiment Tracking | Weights & Biases | Metrics logging and visualization |
-| Configuration | PyYAML | Centralized parameter management |
-| Compute | Kaggle GPU Kernel | Training hardware (Tesla P100/T4) |
-| Storage | Google Drive | DVC remote storage |
-| Code Versioning | Git + GitHub | Code repository |
-| SSH Tunneling | cloudflared | Secure SSH access to Kaggle VM |
-| Remote Development | VS Code/Cursor SSH | Full IDE integration with remote GPU |
+| Component           | Technology                  | Purpose                                          |
+| ------------------- | --------------------------- | ------------------------------------------------ |
+| Training Framework  | Ultralytics YOLOv11         | Object detection model                           |
+| Data Versioning     | DVC 3.x                     | Dataset and model versioning                     |
+| Experiment Tracking | Weights & Biases            | Metrics logging and visualization                |
+| Configuration       | PyYAML                      | Centralized parameter management                 |
+| Compute             | Kaggle GPU Kernel           | Training hardware (Tesla P100/T4)                |
+| Storage             | Google Drive                | DVC remote storage                               |
+| Code Versioning     | Git + GitHub                | Code repository                                  |
+| Notebook Workflow   | kaggle_training_notebook.py | Single-cell complete training pipeline           |
+| Secrets Management  | Kaggle Secrets API          | Secure credential injection (DVC, WandB, GitHub) |
+| DVC Authentication  | Session Token (gdrive)      | Exported from local machine (personal accounts)  |
 
 ---
 
 ## 3. Kaggle Environment Setup
 
-### 3.0 SSH Tunnel Setup (Cloudflared)
+> ⚠️ **Deprecated Method:** SSH tunnel setup via cloudflared is no longer supported (as of Dec 2024) due to GPU driver incompatibility. See `documentation/archive/deprecated-ssh-method/` for historical reference.
 
-**Overview:** The training workflow uses SSH tunneling to enable direct terminal access from your local IDE to the Kaggle VM. This provides full development capabilities (debugging, linting, extensions) while leveraging Kaggle's GPU resources.
+### 3.0 Direct Notebook Workflow (Current Standard)
+
+**Overview:** Training executes in a single Kaggle notebook cell using `kaggle_training_notebook.py`. This file contains the complete workflow: repository cloning, dependency installation, secret configuration, dataset fetching, training, and artifact versioning.
 
 **Architecture:**
 ```
-Local IDE → SSH Client → cloudflared tunnel → Kaggle VM (SSH Server)
+Kaggle Notebook Cell → Execute kaggle_training_notebook.py → Training Complete
 ```
 
-**Setup Steps:**
+**Key Benefits:**
+- **Simplicity:** No SSH tunnel setup, no environment variable injection
+- **Reliability:** No GPU driver compatibility issues
+- **Native Integration:** Direct use of Kaggle Secrets API
+- **Reproducibility:** Single-file execution ensures consistency
 
-#### Step 1: Create SSH Tunnel Notebook
+**File:** `kaggle_training_notebook.py` (892 lines)
 
-Create a Kaggle notebook named `kaggle-ssh-tunnel.ipynb` with the following cells:
+**Workflow Steps:**
+1. **Step 0:** Verify GPU availability (fail fast if no CUDA)
+2. **Steps 1-2:** Clone GitHub repository + install dependencies from `pyproject.toml`
+3. **Step 3:** Configure DVC with session token (from Kaggle Secrets)
+4. **Step 3.5:** Configure Git credentials (from Kaggle Secrets - optional for auto-push)
+5. **Step 4:** Authenticate WandB
+6. **Step 5:** Pull dataset via DVC
+7. **Steps 6-8:** Execute training
+8. **Step 9:** Automatic DVC/Git sync (both push operations succeed)
 
-**Cell 1: Install cloudflared**
-```python
-# Install cloudflared binary
-!wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
-!chmod +x cloudflared-linux-amd64
-!mv cloudflared-linux-amd64 /usr/local/bin/cloudflared
-!cloudflared --version
-```
+**Usage Instructions:**
 
-**Cell 2: Setup SSH Service**
-```python
-import subprocess
-import os
+1. **Create Kaggle Notebook:**
+   - Enable GPU (Tesla T4 or P100)
+   - Enable Internet
+   - Enable Secrets for notebook
 
-# Install and configure SSH server
-!apt-get update -qq && apt-get install -y -qq openssh-server > /dev/null
+2. **Configure Kaggle Secrets** (Account Settings → Secrets):
+   - `GDRIVE_CREDENTIALS_DATA` - DVC session token (exported from local machine)
+   - `WANDB_API_KEY` - Weights & Biases API key
+   - `GITHUB_TOKEN` - GitHub Personal Access Token (optional, for auto-push)
 
-# Set root password for SSH
-!echo "root:kaggle2024" | chpasswd
+3. **Copy Notebook Content:**
+   - Copy entire `kaggle_training_notebook.py` file content
+   - Paste into single Kaggle notebook cell
 
-# Configure SSH to allow root login
-!echo "PermitRootLogin yes" >> /etc/ssh/sshd_config
-!echo "PasswordAuthentication yes" >> /etc/ssh/sshd_config
+4. **Run Cell:**
+   - Estimated time: 3-4 hours (150 epochs on T4 x2)
+   - Monitor output for progress
 
-# Start SSH service
-!service ssh restart
-
-print("✓ SSH service started")
-```
-
-**Cell 3: Inject Kaggle Secrets as Environment Variables**
-```python
-import os
-
-# Read Kaggle Secrets and expose as environment variables
-# These will be accessible in the SSH session
-os.environ['KAGGLE_SECRET_DVC_JSON'] = os.environ.get('DVC_SERVICE_ACCOUNT_JSON', '')
-os.environ['KAGGLE_SECRET_WANDB_KEY'] = os.environ.get('WANDB_API_KEY', '')
-
-# Persist to .bashrc so they're available in SSH sessions
-with open('/root/.bashrc', 'a') as f:
-    f.write(f'\nexport KAGGLE_SECRET_DVC_JSON="{os.environ["KAGGLE_SECRET_DVC_JSON"]}"\n')
-    f.write(f'\nexport KAGGLE_SECRET_WANDB_KEY="{os.environ["KAGGLE_SECRET_WANDB_KEY"]}"\n')
-
-print("✓ Secrets injected as environment variables")
-print("  - KAGGLE_SECRET_DVC_JSON (length:", len(os.environ['KAGGLE_SECRET_DVC_JSON']), ")")
-print("  - KAGGLE_SECRET_WANDB_KEY (length:", len(os.environ['KAGGLE_SECRET_WANDB_KEY']), ")")
-```
-
-**Cell 4: Start Cloudflared Tunnel**
-```python
-# Start tunnel (this cell will run indefinitely)
-# Copy the tunnel URL from output
-!cloudflared tunnel --url ssh://localhost:22
-```
-
-#### Step 2: Connect from Local Machine
-
-Once the tunnel is running, you'll see output like:
-```
-Your quick Tunnel has been created! Visit it at:
-https://example-random-string.trycloudflare.com
-```
-
-**Connect via SSH:**
-```bash
-# Extract host and port from the tunnel URL
-# Example: https://example-random-string.trycloudflare.com
-
-ssh -o StrictHostKeyChecking=no root@example-random-string.trycloudflare.com
-# Password: kaggle2024
-```
-
-**Connect via VS Code/Cursor:**
-
-1. Install "Remote - SSH" extension
-2. Add SSH host configuration:
-   ```
-   Host kaggle-training
-       HostName example-random-string.trycloudflare.com
-       User root
-       StrictHostKeyChecking no
-   ```
-3. Connect to `kaggle-training`
-4. Enter password: `kaggle2024`
-
-#### Step 3: Verify Environment
-
-Once connected via SSH, verify secrets are available:
-
-```bash
-# Check environment variables
-echo $KAGGLE_SECRET_DVC_JSON | head -c 50
-echo $KAGGLE_SECRET_WANDB_KEY | head -c 20
-
-# Clone repository
-cd /kaggle/working
-git clone https://github.com/your-org/container-id-research.git
-cd container-id-research
-
-# Ready to run training scripts!
-```
+5. **Verify Model Upload:**
+   - Check WandB dashboard for training metrics
+   - Verify DVC push succeeded (check Step 9 output logs)
+   - Confirm Git push to GitHub (if GITHUB_TOKEN configured)
 
 **Important Notes:**
-- The tunnel notebook must keep running during the entire training session
-- If the notebook stops, you'll lose SSH access (but training artifacts are saved)
-- Each tunnel session gets a new random URL
-- Free Kaggle GPU sessions last up to 12 hours
+- DVC session token authentication **fully automated** (both pull and push work)
+- Git push works if `GITHUB_TOKEN` configured (pushes `.dvc` metadata files)
+- Model automatically uploaded to Google Drive via DVC
+- See `KAGGLE_TRAINING_GUIDE.md` for detailed step-by-step instructions
 
 ---
 
@@ -302,35 +253,67 @@ cd container-id-research
 
 Configure the following secrets in Kaggle Account Settings → Secrets:
 
-#### 3.1.1 DVC_SERVICE_ACCOUNT_JSON
+#### 3.1.1 GDRIVE_CREDENTIALS_DATA
 
-**Purpose:** Authenticate DVC with Google Drive using Service Account
+**Purpose:** Authenticate DVC with Google Drive using session token (for personal accounts)
 
-**Format:** JSON string containing Google Service Account credentials
+**Format:** JSON string containing Google Drive session credentials
+
+**Setup Steps (Local Machine):**
+
+1. **Configure DVC remote** (if not already done):
+   ```bash
+   dvc remote add -d storage gdrive://<folder_id>
+   dvc remote modify storage gdrive_acknowledge_abuse true
+   ```
+
+2. **Trigger authentication** (first-time setup):
+   ```bash
+   dvc pull  # This will open browser for OAuth login
+   ```
+
+3. **Export session token**:
+   ```bash
+   # Linux/macOS
+   cat ~/.gdrive/credentials.json
+   
+   # Windows
+   type %USERPROFILE%\.gdrive\credentials.json
+   ```
+
+4. **Copy JSON content** (entire file)
+
+5. **Add to Kaggle Secret**:
+   - Name: `GDRIVE_CREDENTIALS_DATA`
+   - Value: Paste entire JSON content from credentials.json
 
 **Example Structure:**
 ```json
 {
-  "type": "service_account",
-  "project_id": "your-project-id",
-  "private_key_id": "key-id",
-  "private_key": "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n",
-  "client_email": "service-account@project.iam.gserviceaccount.com",
-  "client_id": "123456789",
-  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "access_token": "ya29.a0AfH6...",
+  "client_id": "xxx.apps.googleusercontent.com",
+  "client_secret": "xxx",
+  "refresh_token": "1//0xxx",
+  "token_expiry": "2024-12-11T12:00:00Z",
   "token_uri": "https://oauth2.googleapis.com/token",
-  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-  "client_x509_cert_url": "https://www.googleapis.com/..."
+  "user_agent": null,
+  "revoke_uri": "https://oauth2.googleapis.com/revoke",
+  "id_token": null,
+  "id_token_jwt": null,
+  "token_response": {...},
+  "scopes": ["https://www.googleapis.com/auth/drive"],
+  "token_info_uri": "https://oauth2.googleapis.com/tokeninfo",
+  "invalid": false,
+  "_class": "OAuth2Credentials",
+  "_module": "oauth2client.client"
 }
 ```
 
-**Setup Steps:**
-1. Create Google Cloud Project
-2. Enable Google Drive API
-3. Create Service Account with Drive access
-4. Generate JSON key
-5. Share DVC remote folder with service account email
-6. Add JSON content to Kaggle Secret
+**Security Notes:**
+- ⚠️ Session tokens have expiration dates (typically 7 days)
+- 🔄 Re-export and update Kaggle Secret if DVC authentication fails
+- 🔒 Tokens grant full Google Drive access - keep secure
+- ✅ Suitable for personal projects (not recommended for shared accounts)
 
 #### 3.1.2 WANDB_API_KEY
 
@@ -347,124 +330,132 @@ Configure the following secrets in Kaggle Account Settings → Secrets:
 ### 3.2 Kaggle Kernel Configuration
 
 **Kernel Settings:**
-- **Type:** Notebook (for SSH tunnel only - actual training runs via SSH terminal)
+- **Type:** Notebook (training executes directly in notebook cell)
 - **Accelerator:** GPU (Tesla P100 or T4 recommended)
-- **Internet:** Enabled (required for cloudflared, DVC, WandB, pip installs)
-- **Persistence:** Optional (code is cloned via git in SSH session)
+- **Internet:** Enabled (required for Git clone, DVC pull, WandB logging, pip installs)
+- **Persistence:** Optional (all code cloned from GitHub repository)
+- **Secrets:** **Must be enabled** for notebook (required to access Kaggle Secrets API)
 
 **Resource Limits:**
 - GPU time: 30 hours/week (free tier)
 - RAM: 13 GB
 - Disk: 73 GB
-- Session duration: Up to 12 hours (keep tunnel notebook running)
+- Session duration: Up to 12 hours (training typically completes in 3-4 hours)
 
-**Note:** The Kaggle notebook is only used to establish the SSH tunnel. All training commands are executed via the SSH terminal in your local IDE.
+**Note:** Training executes in a single notebook cell. No external SSH connection needed.
 
-### 3.3 Automated Setup Script
+### 3.3 Direct Notebook Execution File
 
-**File:** `scripts/setup_kaggle.sh`
+**File:** `kaggle_training_notebook.py` (892 lines)
 
 **Responsibilities:**
-1. Install Python dependencies
-2. Configure DVC with Service Account (from environment variable)
-3. Authenticate WandB (from environment variable)
-4. Validate environment
+1. Verify GPU availability (fail fast if no CUDA)
+2. Clone GitHub repository
+3. Install dependencies from `pyproject.toml`
+4. Configure DVC with session token (from Kaggle Secrets API)
+5. Configure Git credentials (from Kaggle Secrets API - optional)
+6. Authenticate WandB (from Kaggle Secrets API)
+7. Pull dataset via DVC
+8. Execute training with parameters from `params.yaml`
+9. Automatic DVC/Git sync (both push operations succeed)
 
-**Execution Context:** This script runs **inside the SSH session** on the Kaggle VM.
+**Execution Context:** This Python file is executed **directly in a Kaggle notebook cell** (not as a shell script).
 
-**Pseudocode:**
-```bash
-#!/bin/bash
-# Kaggle Environment Setup (SSH Session)
-# Reads secrets from environment variables injected by tunnel notebook
+**High-Level Pseudocode:**
+```python
+#!/usr/bin/env python3
+# Kaggle Training Notebook (Direct Execution)
+# Complete workflow in single notebook cell
 
-set -e  # Exit on error
-set -u  # Exit on undefined variable
+import subprocess
+import os
 
-echo "=========================================="
-echo "  Kaggle Training Environment Setup      "
-echo "  (SSH Session)                          "
-echo "=========================================="
-echo ""
+def run_command(cmd, description):
+    """Execute shell command with logging."""
+    print(f"\n{'='*60}")
+    print(f"  {description}")
+    print(f"{'='*60}\n")
+    result = subprocess.run(cmd, shell=True)
+    if result.returncode != 0:
+        print(f"❌ Error: {description} failed")
+        exit(1)
+    print(f"✓ {description} completed")
 
-# Step 1: Install Python dependencies
-echo "[1/4] Installing Python packages..."
-pip install -q ultralytics==8.1.0 dvc[gdrive]==3.64.1 wandb==0.16.0 pyyaml==6.0.0
-echo "✓ Packages installed"
-echo ""
+# Step 0: GPU Verification
+import torch
+if not torch.cuda.is_available():
+    print("❌ ERROR: No GPU detected!")
+    exit(1)
+print(f"✓ GPU available: {torch.cuda.get_device_name(0)}")
 
-# Step 2: Read secrets from ENVIRONMENT VARIABLES
-# These were injected by the tunnel notebook before SSH connection
-echo "[2/4] Reading credentials from environment..."
+# Steps 1-2: Repository Setup
+REPO_URL = "https://github.com/duyhxm/container-id-research.git"
+run_command(f"git clone {REPO_URL}", "Clone repository")
+os.chdir("/kaggle/working/container-id-research")
+run_command("pip install -e . --no-cache-dir", "Install dependencies")
 
-DVC_CREDS="${KAGGLE_SECRET_DVC_JSON:-}"
-WANDB_KEY="${KAGGLE_SECRET_WANDB_KEY:-}"
+# Step 3: DVC Configuration
+from kaggle_secrets import UserSecretsClient
+import os
 
-# Validate secrets exist
-if [ -z "$DVC_CREDS" ]; then
-    echo "❌ Error: KAGGLE_SECRET_DVC_JSON environment variable not set"
-    echo "Ensure the tunnel notebook injected secrets correctly"
-    exit 1
-fi
+# Create .gdrive directory
+os.makedirs(os.path.expanduser("~/.gdrive"), exist_ok=True)
 
-if [ -z "$WANDB_KEY" ]; then
-    echo "❌ Error: KAGGLE_SECRET_WANDB_KEY environment variable not set"
-    echo "Ensure the tunnel notebook injected secrets correctly"
-    exit 1
-fi
+# Write session token from Kaggle Secret
+dvc_creds = UserSecretsClient().get_secret("GDRIVE_CREDENTIALS_DATA")
+with open(os.path.expanduser("~/.gdrive/credentials.json"), "w") as f:
+    f.write(dvc_creds)
 
-echo "✓ Secrets loaded from environment"
-echo "  - DVC JSON: ${#DVC_CREDS} characters"
-echo "  - WandB Key: ${#WANDB_KEY} characters"
-echo ""
+print("✓ DVC session token configured")
 
-# Step 3: Configure DVC with Service Account
-echo "[3/4] Configuring DVC..."
+# Step 3.5: Git Configuration (optional)
+try:
+    github_token = UserSecretsClient().get_secret("GITHUB_TOKEN")
+    run_command(f"git config credential.helper store", "Configure Git")
+    # ... OAuth setup ...
+except Exception:
+    print("ℹ️  GITHUB_TOKEN not configured (Git push will be skipped)")
 
-# Write credentials to temporary file
-echo "$DVC_CREDS" > /tmp/dvc_service_account.json
+# Step 4: WandB Authentication
+wandb_key = UserSecretsClient().get_secret("WANDB_API_KEY")
+run_command(f"wandb login {wandb_key}", "Authenticate WandB")
 
-# Configure DVC to use service account
-export GDRIVE_CREDENTIALS_DATA="$DVC_CREDS"
-dvc remote modify storage gdrive_use_service_account true
-dvc remote modify storage gdrive_service_account_json_file_path /tmp/dvc_service_account.json
+# Step 5: Dataset Pull
+run_command("dvc pull data/processed/detection.dvc", "Pull dataset")
 
-echo "✓ DVC configured with service account"
-echo ""
+# Steps 6-8: Training
+run_command(
+    "python src/detection/train.py --config params.yaml --experiment detection_exp001",
+    "Train model"
+)
 
-# Step 4: Authenticate WandB
-echo "[4/4] Authenticating WandB..."
-wandb login "$WANDB_KEY"
-echo "✓ WandB authenticated"
-echo ""
+# Step 9: Artifact Sync
+# DVC add + push (fully automated with session token)
+run_command("dvc add weights/detection/best.pt", "Track model with DVC")
+run_command("dvc push", "Push to Google Drive")  # ✅ Now succeeds
 
-# Verification
-echo "=========================================="
-echo "  Environment Verification               "
-echo "=========================================="
-echo ""
+print("✓ Model uploaded to Google Drive successfully")
 
-echo "DVC version:"
-dvc version
-
-echo ""
-echo "WandB status:"
-wandb status
-
-echo ""
-echo "Ultralytics YOLO version:"
-python -c "from ultralytics import __version__; print(__version__)"
-
-echo ""
-echo "=========================================="
-echo "✓ Setup Complete!                        "
-echo "=========================================="
-echo ""
-echo "Next steps:"
-echo "  1. Run: dvc pull data/processed/detection.dvc"
-echo "  2. Run: bash scripts/run_training.sh"
-echo ""
+# Git push metadata
+run_command("git add weights/detection/*.dvc .gitignore", "Stage DVC files")
+run_command("git commit -m 'feat(detection): add trained model'", "Commit metadata")
+if github_token_configured:
+    run_command("git push", "Push metadata to GitHub")
+    print("✓ Metadata pushed to GitHub")
 ```
+
+**Actual Usage:**
+```python
+# In Kaggle notebook cell:
+# Copy entire kaggle_training_notebook.py content here and run
+```
+
+**Output:**
+- Training logs printed to cell output
+- Model saved to `weights/detection/weights/best.pt`
+- Metadata saved to `weights/detection/metadata.json`
+- DVC files created (`.dvc`, `.gitignore`)
+- Available for download in Notebook → Output
 
 ---
 
@@ -753,11 +744,14 @@ if __name__ == '__main__':
 
 ### 5.3 Training Execution Command
 
-**On Kaggle:**
-```bash
-python src/detection/train.py \
-    --config params.yaml \
-    --experiment detection_exp001_yolo11s_baseline
+**On Kaggle (Direct Notebook):**
+```python
+# In Kaggle notebook cell:
+# Copy entire content of kaggle_training_notebook.py and run
+
+# Training is automatically executed in Step 6-8 within the notebook
+# Command executed internally:
+# python src/detection/train.py --config params.yaml --experiment detection_exp001_yolo11s_baseline
 ```
 
 **Expected Output Structure:**
@@ -778,11 +772,11 @@ weights/detection/
 
 ### 5.4 Expected Training Time
 
-| Hardware | Batch Size | Epochs | Estimated Time |
-|----------|-----------|--------|----------------|
-| Kaggle P100 GPU | 16 | 100 | ~3-4 hours |
-| Kaggle P100 GPU | 32 | 100 | ~2-3 hours |
-| Kaggle T4 GPU | 16 | 100 | ~4-5 hours |
+| Hardware        | Batch Size | Epochs | Estimated Time |
+| --------------- | ---------- | ------ | -------------- |
+| Kaggle P100 GPU | 16         | 100    | ~3-4 hours     |
+| Kaggle P100 GPU | 32         | 100    | ~2-3 hours     |
+| Kaggle T4 GPU   | 16         | 100    | ~4-5 hours     |
 
 ---
 
@@ -801,7 +795,9 @@ weights/detection/
 
 ### 6.2 DVC Add & Push Workflow
 
-**Script:** `scripts/finalize_training_kaggle.sh`
+> ✅ **Fully Automated:** DVC push from Kaggle works with session token authentication (suitable for personal accounts).
+
+**Handled by:** `kaggle_training_notebook.py` Step 9 (automatic execution)
 
 **Steps:**
 
@@ -860,57 +856,40 @@ git add weights/detection/.gitignore  # Created by DVC
 # User must pull these changes and commit locally
 ```
 
-### 6.3 Finalization Script
+### 6.3 Post-Training Workflow (Direct Notebook)
 
-**File:** `scripts/finalize_training_kaggle.sh`
+> ✅ **Fully Automated:** All artifact management handled automatically in `kaggle_training_notebook.py` Step 9.
+
+**Automatic Handling (Step 9 in kaggle_training_notebook.py):**
+
+1. **Generate Metadata:** `src/detection/generate_metadata.py` creates `metadata.json`
+2. **DVC Add:** `dvc add weights/detection/best.pt`
+3. **DVC Push:** `dvc push` → Model uploaded to Google Drive ✅
+4. **Git Commit:** Stages `.dvc` files and commits metadata
+5. **Git Push (Optional):** Pushes to GitHub if `GITHUB_TOKEN` configured
+
+**Expected Output:**
+```
+✓ Model uploaded to Google Drive successfully
+✓ Metadata committed to Git
+✓ Metadata pushed to GitHub (if GITHUB_TOKEN configured)
+```
+
+**Verification (Local Machine):**
 
 ```bash
-#!/bin/bash
-set -e
+# Pull latest metadata from GitHub
+git pull origin main
 
-echo "=== Finalizing Training Artifacts ==="
+# Pull trained model from DVC remote
+dvc pull weights/detection/best.pt.dvc
 
-WEIGHTS_DIR="weights/detection"
-EXPERIMENT_NAME="${1:-detection_exp001}"
-
-# 1. Verify artifacts exist
-if [ ! -f "$WEIGHTS_DIR/best.pt" ]; then
-    echo "Error: best.pt not found"
-    exit 1
-fi
-
-echo "✓ Model checkpoint found"
-
-# 2. Generate metadata (done by Python script)
-python src/detection/generate_metadata.py --weights-dir "$WEIGHTS_DIR"
-
-echo "✓ Metadata generated"
-
-# 3. Add to DVC
-dvc add "$WEIGHTS_DIR/best.pt"
-dvc add "$WEIGHTS_DIR/metadata.json"
-
-echo "✓ Added to DVC tracking"
-
-# 4. Push to remote
-dvc push "$WEIGHTS_DIR/best.pt.dvc"
-dvc push "$WEIGHTS_DIR/metadata.json.dvc"
-
-echo "✓ Pushed to Google Drive"
-
-# 5. Summary
-echo ""
-echo "=== Training Complete ==="
-echo "Experiment: $EXPERIMENT_NAME"
-echo "Model: $WEIGHTS_DIR/best.pt"
-echo "Metadata: $WEIGHTS_DIR/metadata.json"
-echo ""
-echo "Next steps:"
-echo "1. Download .dvc files from Kaggle output"
-echo "2. Commit to Git: git add weights/detection/*.dvc"
-echo "3. Push to GitHub: git push"
-echo "4. Pull locally: dvc pull"
+# Verify model
+ls -lh weights/detection/best.pt
+python -c "from ultralytics import YOLO; m=YOLO('weights/detection/best.pt'); print(m.info())"
 ```
+
+**No Manual Download Required** - Model automatically synced to Google Drive and accessible via `dvc pull`.
 
 ---
 
@@ -918,25 +897,23 @@ echo "4. Pull locally: dvc pull"
 
 ### 7.1 Sync Workflow
 
-**Objective:** Get trained model from Kaggle to local machine
+**Objective:** Access trained model on local machine after Kaggle training completes
 
-**Steps:**
+**Fully Automated Workflow:**
 
-1. **On Kaggle (Automated):**
-   - Training completes
-   - `finalize_training_kaggle.sh` pushes to DVC
-   - `.dvc` files available in Kaggle output
+1. **On Kaggle (Automatic):**
+   - Training completes in `kaggle_training_notebook.py`
+   - Step 9 automatically:
+     - Uploads model to Google Drive via DVC
+     - Commits `.dvc` metadata files to Git
+     - Pushes to GitHub (if `GITHUB_TOKEN` configured)
 
-2. **Manual Download:**
-   - Download `.dvc` files from Kaggle notebook output
-   - Place in `weights/detection/` directory locally
-
-3. **Local Machine:**
+2. **On Local Machine (Simple Pull):**
 ```bash
-# Step 1: Update code repository
+# Step 1: Pull latest metadata from GitHub
 git pull origin main
 
-# Step 2: Pull model from DVC
+# Step 2: Pull model from DVC remote (Google Drive)
 dvc pull weights/detection/best.pt.dvc
 
 # Step 3: Verify model
@@ -944,32 +921,40 @@ ls -lh weights/detection/best.pt
 python -c "from ultralytics import YOLO; m=YOLO('weights/detection/best.pt'); print(m.info())"
 ```
 
-### 7.2 Alternative: Kaggle API Automation
-
-**For advanced users:** Use Kaggle API to download outputs programmatically
-
-```python
-# download_kaggle_outputs.py
-from kaggle.api.kaggle_api_extended import KaggleApi
-import shutil
-
-api = KaggleApi()
-api.authenticate()
-
-# Download notebook output
-api.kernels_output_cli(
-    kernel='username/container-detection-training',
-    path='./kaggle_output'
-)
-
-# Move .dvc files to correct location
-shutil.move(
-    'kaggle_output/weights/detection/best.pt.dvc',
-    'weights/detection/best.pt.dvc'
-)
-
-print("✓ DVC files downloaded")
+**Expected Output:**
 ```
+A       weights/detection/best.pt
+1 file added and 1 file fetched
+-rw-r--r-- 1 user user 45M Dec 11 10:30 weights/detection/best.pt
+
+Model summary: 225 layers, 11,136,374 parameters, 0 gradients
+```
+
+**No Manual Download Required** - Entire workflow fully automated via DVC + Git.
+
+### 7.2 Session Token Maintenance
+
+**Session Token Expiration:**
+- DVC session tokens typically expire after 7 days
+- If `dvc pull` or `dvc push` fails with authentication error, re-export token
+
+**Re-export Workflow:**
+```bash
+# On local machine
+cat ~/.gdrive/credentials.json  # Linux/macOS
+# or
+type %USERPROFILE%\.gdrive\credentials.json  # Windows
+
+# Copy entire JSON output
+
+# Update Kaggle Secret:
+# 1. Go to Kaggle → Account → Secrets
+# 2. Edit GDRIVE_CREDENTIALS_DATA
+# 3. Paste new JSON content
+# 4. Save changes
+```
+
+**Best Practice:** Update token before running training to avoid mid-training authentication failures.
 
 ### 7.3 Verification Checklist
 
@@ -1019,18 +1004,21 @@ After sync, verify:
 **Symptom:** `ERROR: failed to pull data from the cloud`
 
 **Causes:**
-- Service account credentials invalid
-- Service account lacks Drive access
-- DVC remote folder not shared
+- Session token expired (tokens typically last 7 days)
+- Credentials file not configured correctly
+- Network connectivity issues
 
 **Solution:**
 ```bash
-# Verify credentials
-cat /tmp/dvc_service_account.json
+# Verify credentials file exists
+cat ~/.gdrive/credentials.json
 
 # Check DVC config
 dvc remote list
 dvc config --list
+
+# Re-export session token from local machine if expired
+# (see Section 3.1.1 for export instructions)
 
 # Test connection
 dvc status -c
@@ -1114,7 +1102,7 @@ tail -f /kaggle/working/train_output.log
 
 1. **Never commit secrets to Git**
    - No API keys in code
-   - No service account JSON in repository
+   - No DVC session token in repository
    - Use `.gitignore` for credential files
 
 2. **Use Kaggle Secrets API**
@@ -1124,14 +1112,14 @@ tail -f /kaggle/working/train_output.log
 
 3. **Rotate credentials regularly**
    - Update WandB API key every 6 months
-   - Regenerate service account keys annually
+   - Re-export DVC session token every 7 days (or when expired)
 
 ### 9.2 Access Control
 
 **Google Drive:**
-- Service account has read/write access only to DVC folder
-- No access to other user files
-- Can be revoked in Google Cloud Console
+- Session token grants full Google Drive access (use with caution)
+- Token expires after ~7 days (refresh required)
+- Can be revoked by changing Google Account password
 
 **WandB:**
 - API key tied to user account
@@ -1160,223 +1148,118 @@ tail -f /kaggle/working/train_output.log
 
 ## 10. Appendix
 
-### 10.1 Complete Training Script for SSH Workflow
+### 10.1 Complete Training Workflow (Direct Notebook)
 
-**File:** `scripts/run_training.sh`
+> ⚠️ **Deprecated:** SSH workflow scripts (`scripts/run_training.sh`, `scripts/setup_kaggle.sh`) are no longer used. See `documentation/archive/deprecated-ssh-method/` for historical reference.
 
-```bash
-#!/bin/bash
-# Complete Training Pipeline for Kaggle (SSH Workflow)
-# Usage: bash scripts/run_training.sh [experiment_name]
-# Execution: Run this via SSH terminal connected to Kaggle VM
+**File:** `kaggle_training_notebook.py` (892 lines)
 
-set -e  # Exit on error
-set -u  # Exit on undefined variable
+**Purpose:** Complete training pipeline in single Kaggle notebook cell
 
-EXPERIMENT_NAME="${1:-detection_exp001_yolo11s_baseline}"
+**Key Features:**
+- GPU verification with fail-fast
+- GitHub repository cloning
+- Dynamic dependency installation from `pyproject.toml`
+- Native Kaggle Secrets API integration
+- Automatic DVC/Git sync (fully automated with session token)
+- Comprehensive logging and error handling
 
-echo "=========================================="
-echo "  Container Detection Training Pipeline  "
-echo "  Experiment: $EXPERIMENT_NAME          "
-echo "=========================================="
-echo ""
+**Usage:**
+1. Create Kaggle notebook (GPU enabled, Internet enabled, Secrets enabled)
+2. Configure Kaggle Secrets: `GDRIVE_CREDENTIALS_DATA`, `WANDB_API_KEY`, `GITHUB_TOKEN` (optional)
+3. Copy entire `kaggle_training_notebook.py` content into single cell
+4. Run cell (estimated: 3-4 hours for 150 epochs)
+5. Verify output: Check WandB dashboard + DVC push logs
+6. Local access: `git pull && dvc pull weights/detection/best.pt.dvc`
 
-# Phase 1: Setup
-echo "[1/5] Setting up environment..."
-bash scripts/setup_kaggle.sh
-echo ""
+**For detailed step-by-step guide:** See `KAGGLE_TRAINING_GUIDE.md`
 
-# Phase 2: Data
-echo "[2/5] Pulling dataset from DVC..."
-dvc pull data/processed/detection.dvc
-python src/utils/validate_dataset.py --path data/processed/detection
-echo ""
+**For migration from SSH method:** See `documentation/modules/module-1-detection/kaggle-training-workflow.md`
 
-# Phase 3: Train
-echo "[3/5] Training model..."
-python src/detection/train.py \
-    --config params.yaml \
-    --experiment "$EXPERIMENT_NAME"
-echo ""
+### 10.2 Direct Notebook Template (Simplified)
 
-# Phase 4: Version
-echo "[4/5] Versioning artifacts..."
-bash scripts/finalize_training_kaggle.sh "$EXPERIMENT_NAME"
-echo ""
+**Actual File:** `kaggle_training_notebook.py` (use this for production training)
 
-# Phase 5: Summary
-echo "[5/5] Generating summary..."
-python src/detection/generate_summary.py \
-    --experiment "$EXPERIMENT_NAME" \
-    --output "summary_${EXPERIMENT_NAME}.md"
-echo ""
-
-echo "=========================================="
-echo "  Training Complete!                     "
-echo "=========================================="
-echo ""
-echo "Artifacts location:"
-echo "  - Model: weights/detection/best.pt"
-echo "  - Metadata: weights/detection/metadata.json"
-echo "  - Summary: summary_${EXPERIMENT_NAME}.md"
-echo ""
-echo "Next steps:"
-echo "  1. Download .dvc files from Kaggle output"
-echo "  2. Commit to Git locally"
-echo "  3. Run 'dvc pull' to sync model"
-echo ""
-```
-
-### 10.2 SSH Tunnel Notebook Template
-
-**Template:** `notebooks/kaggle_ssh_tunnel.ipynb`
-
-**Purpose:** Establish SSH tunnel to enable remote development on Kaggle GPU
+**Simplified Example (Concept Demonstration):**
 
 ```python
-# ============================================================================
-# Cell 1: Install cloudflared
-# ============================================================================
-print("Installing cloudflared...")
-!wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
-!chmod +x cloudflared-linux-amd64
-!mv cloudflared-linux-amd64 /usr/local/bin/cloudflared
-!cloudflared --version
-print("✓ cloudflared installed")
+# Single Kaggle notebook cell - Complete training workflow
 
-# ============================================================================
-# Cell 2: Setup SSH Service
-# ============================================================================
-print("Setting up SSH service...")
 import subprocess
-
-# Install SSH server
-!apt-get update -qq && apt-get install -y -qq openssh-server > /dev/null
-
-# Configure SSH
-!echo "root:kaggle2024" | chpasswd
-!echo "PermitRootLogin yes" >> /etc/ssh/sshd_config
-!echo "PasswordAuthentication yes" >> /etc/ssh/sshd_config
-
-# Start service
-!service ssh restart
-
-print("✓ SSH service started")
-print("  SSH is running on port 22")
-
-# ============================================================================
-# Cell 3: Inject Kaggle Secrets as Environment Variables
-# ============================================================================
-print("Injecting Kaggle Secrets as environment variables...")
 import os
+import torch
+from kaggle_secrets import UserSecretsClient
 
-# Read from Kaggle Secrets and expose as environment variables
-os.environ['KAGGLE_SECRET_DVC_JSON'] = os.environ.get('DVC_SERVICE_ACCOUNT_JSON', '')
-os.environ['KAGGLE_SECRET_WANDB_KEY'] = os.environ.get('WANDB_API_KEY', '')
+def run(cmd, desc):
+    print(f"\n{'='*60}\n  {desc}\n{'='*60}")
+    result = subprocess.run(cmd, shell=True)
+    if result.returncode != 0:
+        print(f"❌ {desc} failed")
+        exit(1)
+    print(f"✓ {desc} completed")
 
-# Persist to .bashrc for SSH sessions
-with open('/root/.bashrc', 'a') as f:
-    dvc_json = os.environ['KAGGLE_SECRET_DVC_JSON'].replace('"', '\\"')
-    wandb_key = os.environ['KAGGLE_SECRET_WANDB_KEY']
-    
-    f.write(f'\n# Kaggle Secrets for Training\n')
-    f.write(f'export KAGGLE_SECRET_DVC_JSON="{dvc_json}"\n')
-    f.write(f'export KAGGLE_SECRET_WANDB_KEY="{wandb_key}"\n')
+# Step 0: GPU Check
+if not torch.cuda.is_available():
+    print("❌ No GPU!")
+    exit(1)
+print(f"✓ GPU: {torch.cuda.get_device_name(0)}")
 
-print("✓ Secrets injected successfully")
-print(f"  - KAGGLE_SECRET_DVC_JSON: {len(os.environ['KAGGLE_SECRET_DVC_JSON'])} chars")
-print(f"  - KAGGLE_SECRET_WANDB_KEY: {len(os.environ['KAGGLE_SECRET_WANDB_KEY'])} chars")
+# Steps 1-2: Clone + Install
+run("git clone https://github.com/duyhxm/container-id-research.git", "Clone repo")
+os.chdir("/kaggle/working/container-id-research")
+run("pip install -e . --no-cache-dir", "Install deps")
 
-# ============================================================================
-# Cell 4: Start Cloudflared Tunnel (Keep this cell running!)
-# ============================================================================
-print("=" * 60)
-print("Starting cloudflared tunnel...")
-print("=" * 60)
-print("")
-print("COPY THE TUNNEL URL FROM THE OUTPUT BELOW")
-print("Use it to SSH connect from your local machine:")
-print("")
-print("  ssh root@<tunnel-url>")
-print("  Password: kaggle2024")
-print("")
-print("=" * 60)
-print("")
+# Step 3: DVC Setup
+os.makedirs(os.path.expanduser("~/.gdrive"), exist_ok=True)
+dvc_creds = UserSecretsClient().get_secret("GDRIVE_CREDENTIALS_DATA")
+with open(os.path.expanduser("~/.gdrive/credentials.json"), "w") as f:
+    f.write(dvc_creds)
+print("✓ DVC session token configured")
 
-# This will run indefinitely - keep the notebook running!
-!cloudflared tunnel --url ssh://localhost:22
+# Step 4: WandB
+wandb_key = UserSecretsClient().get_secret("WANDB_API_KEY")
+run(f"wandb login {wandb_key}", "Authenticate WandB")
+
+# Step 5: Data
+run("dvc pull data/processed/detection.dvc", "Pull dataset")
+
+# Steps 6-8: Train
+run("python src/detection/train.py --config params.yaml", "Train model")
+
+# Step 9: Sync (Fully automated with session token)
+run("dvc add weights/detection/best.pt", "Track model")
+run("dvc push", "Push to Google Drive")  # ✅ Now succeeds
+print("✓ Model uploaded to Google Drive")
+
+print("\n✅ Training complete!")
+print("🔄 Model synced to Google Drive - accessible via 'dvc pull' locally")
 ```
 
-**Usage Instructions:**
-
-1. **Create and Run Notebook:**
-   - Create new Kaggle notebook with GPU enabled
-   - Add Kaggle Secrets: `DVC_SERVICE_ACCOUNT_JSON`, `WANDB_API_KEY`
-   - Run all cells sequentially
-   - Cell 4 will show the tunnel URL (e.g., `https://xyz.trycloudflare.com`)
-
-2. **Connect from Local IDE:**
-   ```bash
-   # Method 1: Direct SSH
-   ssh root@xyz.trycloudflare.com
-   # Password: kaggle2024
-   
-   # Method 2: VS Code/Cursor
-   # - Install "Remote - SSH" extension
-   # - Add host: root@xyz.trycloudflare.com
-   # - Connect and enter password
-   ```
-
-3. **Verify Environment:**
-   ```bash
-   # In SSH session
-   cd /kaggle/working
-   echo $KAGGLE_SECRET_DVC_JSON | head -c 50
-   echo $KAGGLE_SECRET_WANDB_KEY
-   
-   # Clone repository
-   git clone https://github.com/your-org/container-id-research.git
-   cd container-id-research
-   ```
-
-4. **Run Training:**
-   ```bash
-   # Setup environment
-   bash scripts/setup_kaggle.sh
-   
-   # Pull data
-   dvc pull data/processed/detection.dvc
-   
-   # Start training
-   bash scripts/run_training.sh detection_exp001_yolo11s_baseline
-   ```
-
-**Important Notes:**
-- Keep the tunnel notebook running during entire training session (up to 12 hours)
-- If notebook stops, training will stop (but artifacts are saved if pushed to DVC)
-- Each new tunnel session gets a different URL
-- You get full IDE features: debugging, linting, git integration, etc.
+**Production Usage:**
+- Copy `kaggle_training_notebook.py` (full 892-line version)
+- Paste into Kaggle notebook cell
+- Comprehensive error handling, logging, and Git integration included
 
 ### 10.3 Expected Results
 
 **After successful training:**
 
-| Metric | Target | Typical Result |
-|--------|--------|----------------|
-| Validation mAP@50 | > 0.90 | 0.92 - 0.95 |
-| Validation mAP@50-95 | > 0.70 | 0.72 - 0.78 |
-| Test mAP@50 | > 0.88 | 0.89 - 0.93 |
-| Inference Time (P100) | < 50ms | 30 - 40ms |
-| Model Size | ~45 MB | 44.8 MB |
-| Training Time | ~4 hours | 3.5 - 4.5 hours |
+| Metric                | Target   | Typical Result  |
+| --------------------- | -------- | --------------- |
+| Validation mAP@50     | > 0.90   | 0.92 - 0.95     |
+| Validation mAP@50-95  | > 0.70   | 0.72 - 0.78     |
+| Test mAP@50           | > 0.88   | 0.89 - 0.93     |
+| Inference Time (P100) | < 50ms   | 30 - 40ms       |
+| Model Size            | ~45 MB   | 44.8 MB         |
+| Training Time         | ~4 hours | 3.5 - 4.5 hours |
 
 ### 10.4 Troubleshooting Decision Tree
 
 ```
 Training failed?
 ├─ DVC pull failed?
-│  ├─ Check service account credentials
-│  └─ Verify Drive folder sharing
+│  ├─ Check session token expiration (re-export if needed)
+│  └─ Verify ~/.gdrive/credentials.json exists
 ├─ OOM error?
 │  ├─ Reduce batch_size
 │  └─ Reduce img_size
@@ -1398,10 +1281,45 @@ Training failed?
 - **DVC Documentation:** https://dvc.org/doc
 - **Weights & Biases:** https://docs.wandb.ai/
 - **Kaggle API:** https://github.com/Kaggle/kaggle-api
-- **Google Service Accounts:** https://cloud.google.com/iam/docs/service-accounts
+- **DVC with Google Drive:** https://dvc.org/doc/user-guide/data-management/remote-storage/google-drive
+
+---
+
+## Version History
+
+### Version 2.1 (2024-12-11)
+**Major Improvement:** DVC Session Token Authentication (Replaces Service Account)
+
+**Changes:**
+- **DVC Authentication:** Replaced Service Account with session token method
+  - Export `~/.gdrive/credentials.json` from local machine
+  - Add to Kaggle Secret: `GDRIVE_CREDENTIALS_DATA`
+  - Enables automatic DVC push from Kaggle (both pull and push work)
+- **Workflow Simplification:** Removed manual model download requirement
+  - Step 9 now fully automated (DVC push succeeds)
+  - Local sync simplified to: `git pull` → `dvc pull`
+- **Security:** Session token suitable for personal accounts (7-day expiration)
+- **Documentation:** Updated all sections to reflect automatic DVC push workflow
+
+**Impact:** Training workflow now **fully automated** end-to-end.
+
+---
+
+### Version 2.0 (2024-12-09)
+- **BREAKING CHANGE:** Migrated from SSH tunnel to Direct Notebook workflow
+- Removed all SSH tunnel setup instructions (archived in `documentation/archive/deprecated-ssh-method/`)
+- Updated to use `kaggle_training_notebook.py` (single-cell execution)
+- Added Service Account DVC push limitation documentation
+- Updated all execution commands to reflect notebook cell workflow
+- Removed references to deprecated scripts (`setup_kaggle.sh`, `run_training.sh`)
+
+### Version 1.0 (2024-12-07)
+- Initial specification with SSH tunnel workflow
+- Documented cloudflared setup and VS Code Remote-SSH integration
 
 ---
 
 **Document Maintainer:** duyhxm  
 **Organization:** SOWATCO  
-**Last Review:** 2024-12-07
+**Last Review:** 2024-12-11  
+**Workflow:** Direct Notebook (DVC Session Token Authentication)
