@@ -983,7 +983,7 @@ if ret_code == 0:
                                 print(f"  $ git merge {branch_name}")
                                 print("  $ git push origin main")
                                 print()
-                            else:f"   $ git push -u origin {branch_name}
+                            else:
                                 print("⚠️  Git push failed (check authentication)")
                                 print("   Possible causes:")
                                 print("   - GitHub token expired or invalid")
@@ -991,7 +991,7 @@ if ret_code == 0:
                                 print("   - Repository access denied")
                                 print()
                                 print("   You can manually push later with:")
-                                print("   $ git push origin main")
+                                print(f"   $ git push -u origin {branch_name}")
                         else:
                             print(
                                 "⚠️  Git commit failed (may have no changes to commit)"
