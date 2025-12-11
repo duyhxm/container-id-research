@@ -363,11 +363,10 @@ print("✓ DVC session token configured")
 
 #### Files Created
 
-| File                             | Purpose                                |
-| -------------------------------- | -------------------------------------- |
-| `kaggle_training_notebook.py`    | Complete training workflow in one cell |
-| `KAGGLE_TRAINING_GUIDE.md`       | User-facing documentation              |
-| `scripts/setup_kaggle_simple.sh` | Simplified setup (no Poetry)           |
+| File                          | Purpose                                |
+| ----------------------------- | -------------------------------------- |
+| `kaggle_training_notebook.py` | Complete training workflow in one cell |
+| `KAGGLE_TRAINING_GUIDE.md`    | User-facing documentation              |
 
 #### Files Modified
 
