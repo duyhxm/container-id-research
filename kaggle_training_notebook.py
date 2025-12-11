@@ -175,100 +175,172 @@ try:
     from kaggle_secrets import UserSecretsClient
 
     user_secrets = UserSecretsClient()
-    dvc_json = None
-
-    # Option 1: PRIMARY - Direct from Kaggle Secrets API
-    # This is the standard method as of Dec 2024 (Kaggle API v1.5+)
-    # Secrets configured via notebook "Add-ons → Secrets" UI
+    
+    # ==============================================================================
+    # PREFERRED METHOD: Session Token Authentication (for personal Google Drive)
+    # ==============================================================================
+    # Session tokens allow DVC push/pull to personal Google Drive (read/write access)
+    # Service Accounts cannot write to personal Drive (403 Forbidden error)
+    
+    gdrive_credentials = None
+    use_session_token = False
+    
+    # Try to get session token first (RECOMMENDED for personal projects)
     try:
-        dvc_json = user_secrets.get_secret("DVC_SERVICE_ACCOUNT_JSON")
-        if dvc_json:
-            print("✓ Found DVC_SERVICE_ACCOUNT_JSON from Kaggle Secrets")
+        gdrive_credentials = user_secrets.get_secret("GDRIVE_USER_CREDENTIALS")
+        if gdrive_credentials:
+            print("✓ Found GDRIVE_USER_CREDENTIALS from Kaggle Secrets (session token)")
+            use_session_token = True
     except Exception as e:
-        print(f"⚠️  Kaggle Secrets API error: {e}")
-
-    # Option 2: FALLBACK - Environment variable
-    # For backward compatibility with notebooks that manually set os.environ
-    # before calling this cell (rare, but possible in custom workflows)
-    if not dvc_json:
-        dvc_json = os.environ.get("DVC_SERVICE_ACCOUNT_JSON", "")
-        if dvc_json:
-            print("✓ Found DVC_SERVICE_ACCOUNT_JSON (environment variable)")
-
-    # Option 3: LEGACY - Base64 encoded
-    # From deprecated SSH tunnel method (pre-Dec 2024)
-    # Kept for users migrating from old workflow
-    # TODO: Remove after Q1 2025 when all users migrated
-    if not dvc_json:
-        dvc_json_b64 = os.environ.get("DVC_SERVICE_ACCOUNT_JSON_B64", "")
-        if not dvc_json_b64:
-            dvc_json_b64 = os.environ.get("KAGGLE_SECRET_DVC_JSON_B64", "")
-
-        if dvc_json_b64:
-            print("✓ Found base64-encoded DVC credentials (legacy)")
-            dvc_json = base64.b64decode(dvc_json_b64).decode("utf-8")
-
-    # If none found, exit with instructions
-    if not dvc_json:
-        print("❌ DVC credentials not found!")
-        print("\n📋 Setup Instructions:")
-        print("   1. Click 'Add-ons' (right sidebar) → 'Secrets'")
-        print("   2. Click '+ Add a new secret'")
-        print("   3. Label: DVC_SERVICE_ACCOUNT_JSON")
-        print("   4. Value: Paste your Google Service Account JSON (entire JSON)")
-        print("   5. Click 'Add'")
-        print("   6. Toggle ON the secret for this notebook")
-        print("   7. Restart kernel (Session → Restart Session)")
-        print("   8. Re-run this cell")
-        print('\n💡 Tip: Your JSON should start with: {"type":"service_account",...')
-        sys.exit(1)
-
-    # Validate JSON structure before writing
-    try:
-        sa_data = json.loads(dvc_json)
-
-        # Validate required fields for Google Service Account
-        required_fields = [
-            "type",
-            "project_id",
-            "private_key_id",
-            "private_key",
-            "client_email",
-        ]
-        missing = [f for f in required_fields if f not in sa_data]
-
-        if missing:
-            print(f"❌ Invalid Service Account JSON: Missing fields {missing}")
-            print("\n💡 Ensure you copied the COMPLETE JSON from Google Cloud Console")
+        print(f"⚠️  GDRIVE_USER_CREDENTIALS not found: {e}")
+    
+    # Fallback to environment variable
+    if not gdrive_credentials:
+        gdrive_credentials = os.environ.get("GDRIVE_USER_CREDENTIALS", "")
+        if gdrive_credentials:
+            print("✓ Found GDRIVE_USER_CREDENTIALS (environment variable)")
+            use_session_token = True
+    
+    if use_session_token:
+        print("\n🔐 Using DVC Session Token Authentication")
+        print("   ✅ Supports: DVC pull + push to personal Google Drive")
+        print("   ℹ️  Token expires: ~7 days (re-export if needed)")
+        
+        # Validate JSON format
+        try:
+            creds_data = json.loads(gdrive_credentials)
+            
+            # Check for required OAuth2 fields
+            required_fields = ["access_token", "refresh_token", "client_id", "client_secret"]
+            missing = [f for f in required_fields if f not in creds_data]
+            
+            if missing:
+                print(f"⚠️  Session token missing fields: {missing}")
+                print("   This may still work if token is valid")
+            
+            print("✓ Session token JSON validated")
+        
+        except json.JSONDecodeError as e:
+            print(f"❌ Invalid JSON format in GDRIVE_USER_CREDENTIALS: {e}")
+            print("💡 Ensure you copied the entire JSON from ~/.gdrive/credentials.json")
             sys.exit(1)
-
-        if sa_data.get("type") != "service_account":
-            print("❌ Invalid Service Account JSON: 'type' must be 'service_account'")
-            print(f"   Found: {sa_data.get('type')}")
+        
+        # Create ~/.gdrive directory (DVC looks for credentials here)
+        gdrive_dir = Path.home() / ".gdrive"
+        gdrive_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Write credentials to ~/.gdrive/credentials.json
+        credentials_path = gdrive_dir / "credentials.json"
+        with open(credentials_path, "w") as f:
+            f.write(gdrive_credentials)
+        os.chmod(credentials_path, 0o600)
+        
+        print(f"✓ Session token written to: {credentials_path}")
+        
+        # DVC will automatically detect and use ~/.gdrive/credentials.json
+        # No additional remote configuration needed
+        print("✓ DVC will auto-detect session token (no extra config needed)")
+    
+    else:
+        # ==============================================================================
+        # FALLBACK METHOD: Service Account Authentication (for shared/enterprise Drive)
+        # ==============================================================================
+        print("\n⚠️  Session token not found, falling back to Service Account")
+        print("   ⚠️  WARNING: Service Accounts CANNOT push to personal Google Drive")
+        print("   ℹ️  For personal projects, use GDRIVE_USER_CREDENTIALS instead")
+        
+        dvc_json = None
+        
+        # Option 1: PRIMARY - Direct from Kaggle Secrets API
+        try:
+            dvc_json = user_secrets.get_secret("DVC_SERVICE_ACCOUNT_JSON")
+            if dvc_json:
+                print("✓ Found DVC_SERVICE_ACCOUNT_JSON from Kaggle Secrets")
+        except Exception as e:
+            print(f"⚠️  Kaggle Secrets API error: {e}")
+        
+        # Option 2: FALLBACK - Environment variable
+        if not dvc_json:
+            dvc_json = os.environ.get("DVC_SERVICE_ACCOUNT_JSON", "")
+            if dvc_json:
+                print("✓ Found DVC_SERVICE_ACCOUNT_JSON (environment variable)")
+        
+        # Option 3: LEGACY - Base64 encoded
+        if not dvc_json:
+            dvc_json_b64 = os.environ.get("DVC_SERVICE_ACCOUNT_JSON_B64", "")
+            if not dvc_json_b64:
+                dvc_json_b64 = os.environ.get("KAGGLE_SECRET_DVC_JSON_B64", "")
+            
+            if dvc_json_b64:
+                print("✓ Found base64-encoded DVC credentials (legacy)")
+                dvc_json = base64.b64decode(dvc_json_b64).decode("utf-8")
+        
+        # If none found, exit with instructions
+        if not dvc_json:
+            print("❌ DVC credentials not found!")
+            print("\n📋 Setup Instructions (RECOMMENDED: Session Token):")
+            print("   1. On LOCAL machine, export session token:")
+            print("      Linux/Mac:  cat ~/.gdrive/credentials.json")
+            print("      Windows:    type %USERPROFILE%\\.gdrive\\credentials.json")
+            print("   2. Copy entire JSON output")
+            print("   3. In Kaggle: Add-ons → Secrets → + Add a new secret")
+            print("      - Label: GDRIVE_USER_CREDENTIALS")
+            print("      - Value: Paste JSON content")
+            print("      - Toggle ON for this notebook")
+            print("\n📋 Alternative: Service Account (for shared Drive only):")
+            print("   1. Click 'Add-ons' (right sidebar) → 'Secrets'")
+            print("   2. Click '+ Add a new secret'")
+            print("   3. Label: DVC_SERVICE_ACCOUNT_JSON")
+            print("   4. Value: Paste your Google Service Account JSON")
+            print("   5. Toggle ON the secret for this notebook")
             sys.exit(1)
-
-        print("✓ Service Account JSON validated")
-
-    except json.JSONDecodeError as e:
-        print(f"❌ Invalid JSON format in DVC_SERVICE_ACCOUNT_JSON: {e}")
-        print("💡 Ensure you copied the entire JSON content (including curly braces)")
-        print('   Example: {"type":"service_account","project_id":"..."}')
-        sys.exit(1)
-
-    # Write to file with secure permissions
-    with open("/tmp/dvc_service_account.json", "w") as f:
-        f.write(dvc_json)
-    os.chmod("/tmp/dvc_service_account.json", 0o600)
-
-    # Configure DVC
-    os.system(
-        "dvc remote modify storage gdrive_use_service_account true > /dev/null 2>&1"
-    )
-    os.system(
-        "dvc remote modify storage gdrive_service_account_json_file_path /tmp/dvc_service_account.json > /dev/null 2>&1"
-    )
-
-    print("✓ DVC credentials configured successfully")
+        
+        # Validate Service Account JSON
+        try:
+            sa_data = json.loads(dvc_json)
+            
+            required_fields = [
+                "type",
+                "project_id",
+                "private_key_id",
+                "private_key",
+                "client_email",
+            ]
+            missing = [f for f in required_fields if f not in sa_data]
+            
+            if missing:
+                print(f"❌ Invalid Service Account JSON: Missing fields {missing}")
+                print("\n💡 Ensure you copied the COMPLETE JSON from Google Cloud Console")
+                sys.exit(1)
+            
+            if sa_data.get("type") != "service_account":
+                print("❌ Invalid Service Account JSON: 'type' must be 'service_account'")
+                print(f"   Found: {sa_data.get('type')}")
+                sys.exit(1)
+            
+            print("✓ Service Account JSON validated")
+        
+        except json.JSONDecodeError as e:
+            print(f"❌ Invalid JSON format in DVC_SERVICE_ACCOUNT_JSON: {e}")
+            print("💡 Ensure you copied the entire JSON content (including curly braces)")
+            sys.exit(1)
+        
+        # Write Service Account file
+        with open("/tmp/dvc_service_account.json", "w") as f:
+            f.write(dvc_json)
+        os.chmod("/tmp/dvc_service_account.json", 0o600)
+        
+        # Configure DVC to use Service Account
+        os.system(
+            "dvc remote modify storage gdrive_use_service_account true > /dev/null 2>&1"
+        )
+        os.system(
+            "dvc remote modify storage gdrive_service_account_json_file_path /tmp/dvc_service_account.json > /dev/null 2>&1"
+        )
+        
+        print("✓ Service Account configured (DVC pull only - push will fail)")
+    
+    print("\n✓ DVC credentials configured successfully")
 
 except Exception as e:
     print(f"❌ Error configuring DVC: {e}")
