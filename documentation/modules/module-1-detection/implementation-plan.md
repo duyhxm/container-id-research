@@ -1622,6 +1622,89 @@ For custom visualizations, extend `wandb_utils.py` with additional plotting func
 
 ## Phase 4: DVC Model Versioning
 
+### Understanding DVC Data Management
+
+**Important:** This project uses **two different DVC methods** for tracking data:
+
+#### Method 1: Standalone `.dvc` Files (for raw data)
+
+**Used for:**
+- `data/raw/` → tracked by `data/raw.dvc`
+- `data/annotations/` → tracked by `data/annotations.dvc`
+
+**Commands:**
+```bash
+dvc add data/raw/
+dvc push data/raw.dvc
+dvc pull data/raw.dvc
+```
+
+**Git tracks:** Only the `.dvc` metadata files, NOT the actual data folders.
+
+---
+
+#### Method 2: Pipeline Outputs (for processed data)
+
+**Used for:**
+- `data/interim/` (stratified splits)
+- `data/processed/detection/` (YOLO format dataset)
+- `data/processed/localization/` (pose format dataset)
+
+**Definition in `dvc.yaml`:**
+```yaml
+stages:
+  convert_detection:
+    cmd: python src/data/coco_to_yolo.py ...
+    deps:
+      - data/interim/train_master.json
+    outs:
+      - data/processed/detection  # Pipeline output - NO .dvc file!
+```
+
+**Hash stored in `dvc.lock`:**
+```yaml
+stages:
+  convert_detection:
+    outs:
+    - path: data/processed/detection
+      hash: md5
+      md5: 91b20250d3ea6dd41cca724079718820.dir
+      size: 111035997
+      nfiles: 1005
+```
+
+**Commands:**
+```bash
+# Pull ALL pipeline outputs
+dvc pull
+
+# Or specific stage
+dvc pull convert_detection
+
+# Reproduce entire pipeline
+dvc repro
+```
+
+**Git tracks:**
+- ✅ `dvc.yaml` (pipeline definition)
+- ✅ `dvc.lock` (output hashes)
+- ❌ NOT `data/processed/detection.dvc` (doesn't exist!)
+
+**Common Mistake:**
+```python
+# ❌ WRONG - detection.dvc doesn't exist!
+if not os.path.exists("data/processed/detection.dvc"):
+    sys.exit(1)
+os.system("dvc pull data/processed/detection.dvc")
+
+# ✅ CORRECT - Check dvc.lock and use stage name
+if not os.path.exists("dvc.lock"):
+    sys.exit(1)
+os.system("dvc pull")  # Pulls all pipeline outputs
+```
+
+---
+
 ### Task 4.1: Create `scripts/version_model.sh`
 
 **Objective:** Automate model versioning with DVC
