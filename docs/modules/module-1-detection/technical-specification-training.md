@@ -37,7 +37,7 @@ This document defines the technical architecture and workflow for training the *
 ### 1.2 Design Principles
 
 1. **Automation-First:** Single-cell notebook execution minimizes manual steps
-2. **Reproducibility:** All configurations parameterized in `params.yaml`
+2. **Reproducibility:** All configurations parameterized in `experiments/*.yaml`
 3. **Cloud-Native:** Designed for ephemeral Kaggle environment with direct notebook workflow
 4. **Security:** Secrets managed via Kaggle Secrets API (native integration)
 5. **Single-Cell Execution:** Complete training workflow (clone → install → train → sync) in one notebook cell
@@ -57,7 +57,7 @@ This document defines the technical architecture and workflow for training the *
 
 ### 2.1 System Overview
 
-> ⚠️ **Workflow Update (Dec 2024):** This specification describes the **Direct Notebook workflow** (current standard). The older SSH tunnel method is **deprecated** due to GPU driver incompatibility. See `documentation/archive/deprecated-ssh-method/` for historical reference.
+> ⚠️ **Workflow Update (Dec 2024):** This specification describes the **Direct Notebook workflow** (current standard). The older SSH tunnel method is **deprecated** due to GPU driver incompatibility. See `docs/archive/deprecated-ssh-method/` for historical reference.
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -751,12 +751,12 @@ if __name__ == '__main__':
 
 # Training is automatically executed in Step 6-8 within the notebook
 # Command executed internally:
-# python src/detection/train.py --config params.yaml --experiment detection_exp001_yolo11s_baseline
+# python src/detection/train_and_evaluate.py --config experiments/001_det_baseline.yaml --experiment detection_exp001_yolo11s_baseline
 ```
 
 **Expected Output Structure:**
 ```
-weights/detection/
+artifacts/detection/
 ├── train/                 # Training outputs
 │   ├── weights/
 │   │   ├── best.pt        # Best checkpoint (highest mAP)

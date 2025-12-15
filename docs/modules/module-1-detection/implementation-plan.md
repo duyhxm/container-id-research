@@ -389,13 +389,13 @@ See Task 1.2 for complete workflow (automatic sync from Kaggle notebook).
 
 ## Phase 2: Core Training Implementation
 
-### Task 2.1: Rewrite `src/detection/train.py`
+### Task 2.1: Rewrite `src/detection/train_and_evaluate.py`
 
-**Objective:** Implement complete YOLOv11 training script with WandB integration
+**Objective:** Implement complete YOLOv11 training and evaluation script with WandB integration
 
 **Dependencies:** Task 2.2 (config.py), Task 3.1 (WandB callbacks)
 
-**File Location:** `src/detection/train.py`
+**File Location:** `src/detection/train_and_evaluate.py`
 
 **Implementation Steps:**
 
@@ -717,16 +717,16 @@ if __name__ == '__main__':
 
 ```bash
 # Basic training
-python src/detection/train.py --config params.yaml
+python src/detection/train_and_evaluate.py --config experiments/001_det_baseline.yaml
 
 # With custom experiment name
-python src/detection/train.py \
-    --config params.yaml \
+python src/detection/train_and_evaluate.py \
+    --config experiments/001_det_baseline.yaml \
     --experiment detection_exp002_yolo11s_augmented
 
 # With custom data path
-python src/detection/train.py \
-    --config params.yaml \
+python src/detection/train_and_evaluate.py \
+    --config experiments/001_det_baseline.yaml \
     --data /custom/path/data.yaml
 ```
 
@@ -2153,13 +2153,13 @@ python src/detection/generate_summary.py \
 
 ### Task 5.2: ~~Create SSH Tunnel Notebook~~ → OBSOLETE
 
-**Status:** ❌ DEPRECATED (Dec 9, 2024) - Archived in `documentation/archive/deprecated-ssh-method/`
+**Status:** ❌ DEPRECATED (Dec 9, 2024) - Archived in `docs/archive/deprecated-ssh-method/`
 
 **Reason:** GPU driver incompatibility (Error 803), maintenance complexity
 
 **Migration:** Use `kaggle_training_notebook.py` (direct notebook workflow - no SSH tunnel required)
 
-**Historical Reference:** See `documentation/archive/deprecated-ssh-method/kaggle_ssh_tunnel.ipynb` for archived implementation
+**Historical Reference:** See `docs/archive/deprecated-ssh-method/kaggle_ssh_tunnel.ipynb` for archived implementation
 
 ---
 
@@ -2246,7 +2246,7 @@ echo "✓ Dry-run test passed!"
 
 **Objective:** Create testing checklist
 
-**File Location:** `documentation/modules/module-1-detection/testing-checklist.md`
+**File Location:** `docs/modules/module-1-detection/testing-checklist.md`
 
 **Content:**
 

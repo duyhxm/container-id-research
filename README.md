@@ -1,6 +1,6 @@
 # Container ID Extraction Research / Nghiên cứu Trích xuất Mã số Container
 
-[![Python Version](https://img.shields.io/badge/python-3.13-blue.svg)](https://www.python.org/downloads/)
+[![Python Version](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/downloads/)
 [![DVC](https://img.shields.io/badge/DVC-Enabled-brightgreen.svg)](https://dvc.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Status](https://img.shields.io/badge/status-In%20Development-yellow.svg)]()
@@ -67,11 +67,11 @@ graph LR
 
 ### Technology Stack
 
-- **Language**: Python 3.13
+- **Language**: Python 3.11
 - **Deep Learning**: YOLOv11 (Ultralytics), PyTorch
 - **Data Versioning**: DVC with Google Drive backend
 - **Experiment Tracking**: Weights & Biases (wandb)
-- **Dependency Management**: Poetry
+- **Dependency Management**: uv
 - **Computer Vision**: OpenCV, Albumentations
 - **Data Analysis**: Pandas, NumPy, Matplotlib, Seaborn
 
@@ -101,48 +101,77 @@ graph LR
 
 ## Project Structure
 
-```
+This repository follows a strict separation of concerns as defined in [.github/instructions/project_structure.instructions.md](.github/instructions/project_structure.instructions.md).
+
+```text
 container-id-research/
-├── data/                          # Data directory (managed by DVC)
-│   ├── raw/                       # Raw images (831 images) & annotations
-│   ├── annotations/               # COCO format annotations
-│   ├── interim/                   # Intermediate data (stratified splits)
-│   └── processed/                 # YOLO format datasets per module
+├── .github/
+│   ├── instructions/       # Agent Rules (Single Source of Truth)
+│   └── prompts/
 │
-├── src/                           # Source code (functional organization)
-│   ├── data/                      # Data processing & preparation
-│   ├── detection/                 # Module 1: Door detection
-│   ├── quality/                   # Module 2: Quality assessment
-│   ├── localization/              # Module 3: ID localization
-│   ├── alignment/                 # Module 4: Perspective correction
-│   ├── ocr/                       # Module 5: OCR extraction
-│   ├── pipeline/                  # End-to-end orchestration
-│   └── utils/                     # Shared utilities
+├── artifacts/              # [GIT IGNORE] Automated Outputs
+│   └── [module_name]/      # Organized by Module (e.g., detection, ocr)
+│       └── [experiment_id]/
+│           ├── weights/
+│           └── results.csv
 │
-├── notebooks/                     # Jupyter notebooks for EDA
-├── experiments/                   # Experiment results & wandb logs
-├── weights/                       # Trained model weights
-├── documentation/                 # Comprehensive documentation
-│   ├── general/                   # Architecture & guidelines
-│   ├── data-labeling/             # Annotation guidelines
-│   └── modules/                   # Per-module technical specs
+├── data/                   # [DVC Managed]
+│   └── processed/
+│       └── [module_name]/  # Example: detection
+│           ├── images/
+│           ├── labels/
+│           └── data.yaml   # <--- CRITICAL: Data config resides with data
 │
-├── scripts/                       # Utility scripts
-├── tests/                         # Unit & integration tests
-├── dvc.yaml                       # DVC pipeline definition
-├── params.yaml                    # Centralized parameters
-└── pyproject.toml                 # Poetry dependencies
+├── demos/                  # Interactive Research Apps
+│   └── [module_name]/      # Example: detection
+│       ├── app.py          # Entry point (Gradio/Streamlit)
+│       └── samples/        # Test images specific to this demo
+│
+├── docs/                   # Documentation Center
+│   ├── guidelines/         # Labeling & SOPs
+│   ├── reports/            # Technical Reports
+│   └── structure.md
+│
+├── experiments/            # [INPUT] Hyperparameter Configs
+│   ├── 001_det_baseline.yaml   # Naming: [id]_[module]_[description].yaml
+│   └── ...
+│
+├── notebooks/              # Sandbox for EDA & Prototyping
+│   ├── 01_eda_detection.ipynb
+│   └── ...
+│
+├── scripts/                # Standalone Utility Scripts
+│   ├── kaggle/             # Remote training scripts
+│   ├── data_processing/    # One-off conversion scripts
+│   └── utils/
+│
+├── src/                    # [LIBRARY] Reusable Core Logic (No execution code)
+│   ├── __init__.py
+│   ├── [module_name]/      # Example: detection
+│   │   ├── __init__.py
+│   │   ├── model.py        # Architecture definition
+│   │   ├── dataset.py      # Custom Dataloader
+│   │   └── trainer.py      # Training loop logic
+│   └── utils/              # Shared utilities (geometry, visualization)
+│
+├── tests/                  # Unit Tests mirroring src structure
+├── .env                    # Secrets (API Keys)
+├── dvc.yaml                # DVC Pipeline
+├── pyproject.toml          # Dependency Management
+└── README.md
 ```
 
 ### Directory Explanations
 
-- **`data/`**: All datasets managed by DVC. `raw/` contains original images, `interim/` holds stratified train/val/test splits, `processed/` contains YOLO-formatted data per module.
-- **`src/`**: Source code organized by functionality. Each module is self-contained with training, inference, and utilities.
-- **`notebooks/`**: Exploratory Data Analysis and result visualization notebooks.
-- **`experiments/`**: Stores experiment configurations, results, and wandb logs (gitignored).
-- **`weights/`**: Model checkpoints organized by module.
-- **`documentation/`**: In-depth documentation including data labeling guidelines, methodology papers, and technical specifications.
-- **`scripts/`**: Automation scripts for setup, data download, and pipeline execution.
+- **`src/` (The Library)**: Contains the core business logic and reusable components. Code here must be importable.
+- **`experiments/` (The Configuration)**: Stores the "DNA" of every training run. A single YAML file must fully define an experiment.
+- **`data/`**: All datasets managed by DVC. `raw/` contains original images, `interim/` holds stratified splits, `processed/` contains YOLO-formatted data.
+- **`artifacts/` (The Output)**: Stores generated files (weights, logs, plots). This directory is git-ignored.
+- **`scripts/` (The Executors)**: Entry points for execution. Scripts should import logic from `src` and configuration from `experiments`.
+- **`notebooks/` (The Sandbox)**: Exploratory Data Analysis (EDA), prototyping, and visualization.
+- **`demos/` (The Showcase)**: Interactive applications (Gradio/Streamlit) to demonstrate model capabilities.
+- **`docs/`**: Documentation Center including guidelines, reports, and structure definitions.
+- **`.github/`**: Contains agent instructions and prompts, serving as the single source of truth for project rules.
 
 ---
 
@@ -150,8 +179,8 @@ container-id-research/
 
 ### Prerequisites
 
-- **Python 3.13** (required)
-- **Poetry** (dependency manager)
+- **Python 3.11** (required)
+- **uv** (dependency manager)
 - **Git** (version control)
 - **DVC** (data version control)
 - **Google Drive account** (for data access)
@@ -165,20 +194,24 @@ git clone <repository-url>
 cd container-id-research
 ```
 
-2. **Install dependencies with Poetry**
+2. **Install dependencies with uv**
 
 ```bash
-# Install Poetry if not already installed
-curl -sSL https://install.python-poetry.org | python3 -
+# Install uv if not already installed
+pip install uv
 
 # Install project dependencies
-poetry install
+uv sync
 ```
 
 3. **Activate virtual environment**
 
 ```bash
-poetry shell
+# Windows
+.venv\Scripts\activate
+
+# Linux/macOS
+source .venv/bin/activate
 ```
 
 4. **Setup DVC and pull data**
@@ -195,7 +228,7 @@ dvc pull
 
 ```bash
 # Check Python version
-python --version  # Should show 3.13.x
+python --version  # Should show 3.11.x
 
 # Verify DVC data
 ls data/raw/  # Should show images
@@ -249,7 +282,7 @@ The project employs **Label Powerset Stratification with Rare-Class Aggregation*
 - Singleton handling with controlled augmentation
 - Ratios: 70% Train, 15% Validation, 15% Test
 
-📚 **Detailed methodology**: See [`documentation/modules/module-1-detection/data-splitting-methodology.md`](documentation/modules/module-1-detection/data-splitting-methodology.md)
+📚 **Detailed methodology**: See [`docs/modules/module-1-detection/data-splitting-methodology.md`](docs/modules/module-1-detection/data-splitting-methodology.md)
 
 ---
 
@@ -276,10 +309,7 @@ dvc repro convert_localization
 **Local Training:**
 ```bash
 # Train YOLOv11 detection model
-python src/detection/train.py --config experiments/detection/exp001_baseline/config.yaml
-
-# Run inference
-python src/detection/inference.py --weights weights/detection/train/weights/best.pt --source test_images/
+python src/detection/train_and_evaluate.py --config experiments/001_det_baseline.yaml
 ```
 
 **Kaggle Training (Recommended):**
@@ -298,7 +328,7 @@ python src/detection/inference.py --weights weights/detection/train/weights/best
 python src/localization/train.py --config experiments/localization/exp001_baseline/config.yaml
 
 # Run inference
-python src/localization/inference.py --weights weights/localization/best.pt --source test_images/
+python src/localization/inference.py --weights artifacts/localization/best.pt --source test_images/
 ```
 
 ### Running Full Pipeline
@@ -374,18 +404,21 @@ Examples:
 
 ### Model Storage
 
-Trained models are stored in the `weights/` directory, organized by module:
+Trained models are stored in the `artifacts/` directory, organized by module:
 
 ```
-weights/
+artifacts/
 ├── detection/
-│   ├── best.pt          # Best checkpoint based on validation mAP
-│   └── last.pt          # Latest checkpoint
-├── localization/
-│   ├── best.pt
-│   └── last.pt
-└── ocr/
-    └── best.pt
+│   └── exp001/
+│       ├── weights/
+│       │   ├── best.pt
+│       │   └── last.pt
+│       └── results.csv
+└── localization/
+    └── exp001/
+        └── weights/
+            ├── best.pt
+            └── last.pt
 ```
 
 ### Model Versioning Strategy
@@ -451,7 +484,7 @@ This project follows **Unified Conventional Commits Standard (UCCS)**.
 - `style`: Code formatting (no logic change)
 - `chore`: Maintenance tasks (dependencies, configs)
 
-📚 **Full guidelines**: [`documentation/general/conventional-commit-guideline.md`](documentation/general/conventional-commit-guideline.md)
+📚 **Full guidelines**: [`docs/general/conventional-commit-guideline.md`](docs/general/conventional-commit-guideline.md)
 
 ### Branch Strategy
 
@@ -490,19 +523,19 @@ pytest --cov=src tests/
 ### Available Documentation
 
 #### General
-- [Conventional Commit Guidelines](documentation/general/conventional-commit-guideline.md)
-- [System Architecture](documentation/general/architecture.md) _(To be created)_
+- [Conventional Commit Guidelines](docs/general/conventional-commit-guideline.md)
+- [System Architecture](docs/general/architecture.md) _(To be created)_
 
 #### Data Labeling
-- [Attribute Annotation Guideline](documentation/data-labeling/attribute-annotation-guideline.md)
-- [Container Door Labeling Guideline](documentation/data-labeling/container-door-labeling-guideline.md)
-- [Container ID Labeling Guideline](documentation/data-labeling/id-container-labeling-guideline.md)
+- [Attribute Annotation Guideline](docs/data-labeling/attribute-annotation-guideline.md)
+- [Container Door Labeling Guideline](docs/data-labeling/container-door-labeling-guideline.md)
+- [Container ID Labeling Guideline](docs/data-labeling/id-container-labeling-guideline.md)
 
 #### Module-Specific
 - **Module 1 (Detection)**:
-  - [Data Splitting Methodology](documentation/modules/module-1-detection/data-splitting-methodology.md)
-  - [Technical Specification: Data Splitting](documentation/modules/module-1-detection/technical-specification-data-splitting.md)
-  - [Training Guide](documentation/modules/module-1-detection/training-guide.md) _(To be created)_
+  - [Data Splitting Methodology](docs/modules/module-1-detection/data-splitting-methodology.md)
+  - [Technical Specification: Data Splitting](docs/modules/module-1-detection/technical-specification-data-splitting.md)
+  - [Training Guide](docs/modules/module-1-detection/training-guide.md) _(To be created)_
 
 ---
 
@@ -640,11 +673,11 @@ graph LR
 
 ## Ngăn xếp Công nghệ
 
-- **Ngôn ngữ**: Python 3.13
+- **Ngôn ngữ**: Python 3.11
 - **Deep Learning**: YOLOv11 (Ultralytics), PyTorch
 - **Quản lý phiên bản dữ liệu**: DVC với Google Drive backend
 - **Theo dõi thực nghiệm**: Weights & Biases (wandb)
-- **Quản lý dependencies**: Poetry
+- **Quản lý dependencies**: uv
 - **Computer Vision**: OpenCV, Albumentations
 - **Phân tích dữ liệu**: Pandas, NumPy, Matplotlib, Seaborn
 
@@ -670,48 +703,77 @@ graph LR
 
 ## Cấu trúc Dự án
 
-```
+Dự án này tuân thủ nghiêm ngặt việc phân tách các mối quan tâm như được định nghĩa trong [.github/instructions/project_structure.instructions.md](.github/instructions/project_structure.instructions.md).
+
+```text
 container-id-research/
-├── data/                          # Thư mục dữ liệu (quản lý bởi DVC)
-│   ├── raw/                       # Ảnh gốc (831 ảnh) & annotations
-│   ├── annotations/               # Annotations định dạng COCO
-│   ├── interim/                   # Dữ liệu trung gian (stratified splits)
-│   └── processed/                 # Datasets định dạng YOLO cho từng module
+├── .github/
+│   ├── instructions/       # Quy tắc Agent (Nguồn sự thật duy nhất)
+│   └── prompts/
 │
-├── src/                           # Mã nguồn (tổ chức theo chức năng)
-│   ├── data/                      # Xử lý & chuẩn bị dữ liệu
-│   ├── detection/                 # Module 1: Phát hiện cửa
-│   ├── quality/                   # Module 2: Đánh giá chất lượng
-│   ├── localization/              # Module 3: Định vị ID
-│   ├── alignment/                 # Module 4: Nắn chỉnh phối cảnh
-│   ├── ocr/                       # Module 5: Trích xuất OCR
-│   ├── pipeline/                  # Điều phối end-to-end
-│   └── utils/                     # Tiện ích dùng chung
+├── artifacts/              # [GIT IGNORE] Đầu ra tự động
+│   └── [module_name]/      # Tổ chức theo Module (vd: detection, ocr)
+│       └── [experiment_id]/
+│           ├── weights/
+│           └── results.csv
 │
-├── notebooks/                     # Jupyter notebooks cho EDA
-├── experiments/                   # Kết quả thực nghiệm & wandb logs
-├── weights/                       # Trọng số model đã train
-├── documentation/                 # Tài liệu toàn diện
-│   ├── general/                   # Kiến trúc & hướng dẫn
-│   ├── data-labeling/             # Hướng dẫn gán nhãn
-│   └── modules/                   # Đặc tả kỹ thuật từng module
+├── data/                   # [DVC Managed]
+│   └── processed/
+│       └── [module_name]/  # Vd: detection
+│           ├── images/
+│           ├── labels/
+│           └── data.yaml   # <--- QUAN TRỌNG: Config dữ liệu nằm cùng dữ liệu
 │
-├── scripts/                       # Scripts tiện ích
-├── tests/                         # Unit & integration tests
-├── dvc.yaml                       # Định nghĩa DVC pipeline
-├── params.yaml                    # Tham số tập trung
-└── pyproject.toml                 # Poetry dependencies
+├── demos/                  # Ứng dụng nghiên cứu tương tác
+│   └── [module_name]/      # Vd: detection
+│       ├── app.py          # Điểm nhập (Gradio/Streamlit)
+│       └── samples/        # Ảnh test cụ thể cho demo này
+│
+├── docs/                   # Trung tâm Tài liệu
+│   ├── guidelines/         # Hướng dẫn gán nhãn & SOPs
+│   ├── reports/            # Báo cáo kỹ thuật
+│   └── structure.md
+│
+├── experiments/            # [INPUT] Cấu hình Hyperparameter
+│   ├── 001_det_baseline.yaml   # Đặt tên: [id]_[module]_[description].yaml
+│   └── ...
+│
+├── notebooks/              # Sandbox cho EDA & Prototyping
+│   ├── 01_eda_detection.ipynb
+│   └── ...
+│
+├── scripts/                # Scripts tiện ích độc lập
+│   ├── kaggle/             # Scripts training từ xa
+│   ├── data_processing/    # Scripts chuyển đổi một lần
+│   └── utils/
+│
+├── src/                    # [THƯ VIỆN] Logic cốt lõi tái sử dụng (Không code thực thi)
+│   ├── __init__.py
+│   ├── [module_name]/      # Vd: detection
+│   │   ├── __init__.py
+│   │   ├── model.py        # Định nghĩa kiến trúc
+│   │   ├── dataset.py      # Custom Dataloader
+│   │   └── trainer.py      # Logic vòng lặp training
+│   └── utils/              # Tiện ích chia sẻ (hình học, trực quan hóa)
+│
+├── tests/                  # Unit Tests phản chiếu cấu trúc src
+├── .env                    # Secrets (API Keys)
+├── dvc.yaml                # DVC Pipeline
+├── pyproject.toml          # Quản lý Dependency
+└── README.md
 ```
 
 ### Giải thích Thư mục
 
-- **`data/`**: Tất cả datasets được quản lý bởi DVC. `raw/` chứa ảnh gốc, `interim/` chứa train/val/test splits đã phân tầng, `processed/` chứa dữ liệu định dạng YOLO cho từng module.
-- **`src/`**: Mã nguồn được tổ chức theo chức năng. Mỗi module độc lập với training, inference và utilities.
-- **`notebooks/`**: Notebooks phân tích dữ liệu khám phá và trực quan hóa kết quả.
-- **`experiments/`**: Lưu trữ cấu hình thực nghiệm, kết quả và wandb logs (gitignored).
-- **`weights/`**: Model checkpoints được tổ chức theo module.
-- **`documentation/`**: Tài liệu chi tiết bao gồm hướng dẫn gán nhãn, phương pháp luận và đặc tả kỹ thuật.
-- **`scripts/`**: Scripts tự động hóa cho thiết lập, tải dữ liệu và thực thi pipeline.
+- **`src/` (Thư viện)**: Chứa logic nghiệp vụ cốt lõi và các thành phần tái sử dụng. Code ở đây phải có thể import được.
+- **`experiments/` (Cấu hình)**: Lưu trữ "DNA" của mỗi lần chạy training. Một file YAML duy nhất phải định nghĩa đầy đủ một thực nghiệm.
+- **`data/`**: Tất cả datasets được quản lý bởi DVC. `raw/` chứa ảnh gốc, `interim/` chứa các split đã phân tầng, `processed/` chứa dữ liệu định dạng YOLO.
+- **`artifacts/` (Đầu ra)**: Lưu trữ các file được tạo ra (trọng số, logs, biểu đồ). Thư mục này được git-ignore.
+- **`scripts/` (Người thực thi)**: Điểm nhập để thực thi. Scripts nên import logic từ `src` và cấu hình từ `experiments`.
+- **`notebooks/` (Sandbox)**: Phân tích dữ liệu khám phá (EDA), tạo mẫu và trực quan hóa.
+- **`demos/` (Trưng bày)**: Các ứng dụng tương tác (Gradio/Streamlit) để demo khả năng của model.
+- **`docs/`**: Trung tâm tài liệu bao gồm hướng dẫn, báo cáo và định nghĩa cấu trúc.
+- **`.github/`**: Chứa hướng dẫn và prompts cho agent, đóng vai trò là nguồn sự thật duy nhất cho các quy tắc dự án.
 
 ---
 
@@ -719,8 +781,8 @@ container-id-research/
 
 ### Yêu cầu
 
-- **Python 3.13** (bắt buộc)
-- **Poetry** (quản lý dependencies)
+- **Python 3.11** (bắt buộc)
+- **uv** (quản lý dependencies)
 - **Git** (version control)
 - **DVC** (data version control)
 - **Tài khoản Google Drive** (để truy cập dữ liệu)
@@ -734,20 +796,24 @@ git clone <repository-url>
 cd container-id-research
 ```
 
-2. **Cài đặt dependencies với Poetry**
+2. **Cài đặt dependencies với uv**
 
 ```bash
-# Cài đặt Poetry nếu chưa có
-curl -sSL https://install.python-poetry.org | python3 -
+# Cài đặt uv nếu chưa có
+pip install uv
 
 # Cài đặt dependencies của dự án
-poetry install
+uv sync
 ```
 
 3. **Kích hoạt môi trường ảo**
 
 ```bash
-poetry shell
+# Windows
+.venv\Scripts\activate
+
+# Linux/macOS
+source .venv/bin/activate
 ```
 
 4. **Thiết lập DVC và tải dữ liệu**
@@ -764,7 +830,7 @@ dvc pull
 
 ```bash
 # Kiểm tra phiên bản Python
-python --version  # Phải hiển thị 3.13.x
+python --version  # Phải hiển thị 3.11.x
 
 # Kiểm tra dữ liệu DVC
 ls data/raw/  # Phải hiển thị ảnh
@@ -818,7 +884,7 @@ Dự án áp dụng **Phân tầng dựa trên Label Powerset với Gộp nhóm 
 - Xử lý singleton với augmentation có kiểm soát
 - Tỷ lệ: 70% Train, 15% Validation, 15% Test
 
-📚 **Phương pháp chi tiết**: Xem [`documentation/modules/module-1-detection/data-splitting-methodology.md`](documentation/modules/module-1-detection/data-splitting-methodology.md)
+📚 **Phương pháp chi tiết**: Xem [`docs/modules/module-1-detection/data-splitting-methodology.md`](docs/modules/module-1-detection/data-splitting-methodology.md)
 
 ---
 
@@ -844,10 +910,7 @@ dvc repro convert_localization
 
 ```bash
 # Huấn luyện YOLOv11 detection model
-python src/detection/train.py --config experiments/detection/exp001_baseline/config.yaml
-
-# Chạy inference
-python src/detection/inference.py --weights weights/detection/train/weights/best.pt --source test_images/
+python src/detection/train_and_evaluate.py --config experiments/001_det_baseline.yaml
 ```
 
 #### Module 3: Định vị Mã số Container
@@ -857,7 +920,7 @@ python src/detection/inference.py --weights weights/detection/train/weights/best
 python src/localization/train.py --config experiments/localization/exp001_baseline/config.yaml
 
 # Chạy inference
-python src/localization/inference.py --weights weights/localization/best.pt --source test_images/
+python src/localization/inference.py --weights artifacts/localization/best.pt --source test_images/
 ```
 
 ### Chạy Pipeline Đầy đủ
@@ -933,18 +996,21 @@ Ví dụ:
 
 ### Lưu trữ Model
 
-Các model đã train được lưu trong thư mục `weights/`, tổ chức theo module:
+Các model đã train được lưu trong thư mục `artifacts/`, tổ chức theo module:
 
 ```
-weights/
+artifacts/
 ├── detection/
-│   ├── best.pt          # Checkpoint tốt nhất dựa trên validation mAP
-│   └── last.pt          # Checkpoint mới nhất
-├── localization/
-│   ├── best.pt
-│   └── last.pt
-└── ocr/
-    └── best.pt
+│   └── exp001/
+│       ├── weights/
+│       │   ├── best.pt
+│       │   └── last.pt
+│       └── results.csv
+└── localization/
+    └── exp001/
+        └── weights/
+            ├── best.pt
+            └── last.pt
 ```
 
 ### Chiến lược Phiên bản Model
@@ -1010,7 +1076,7 @@ Dự án này tuân theo **Unified Conventional Commits Standard (UCCS)**.
 - `style`: Format code (không thay đổi logic)
 - `chore`: Tác vụ bảo trì (dependencies, configs)
 
-📚 **Hướng dẫn đầy đủ**: [`documentation/general/conventional-commit-guideline.md`](documentation/general/conventional-commit-guideline.md)
+📚 **Hướng dẫn đầy đủ**: [`docs/general/conventional-commit-guideline.md`](docs/general/conventional-commit-guideline.md)
 
 ### Chiến lược Branch
 
@@ -1049,19 +1115,19 @@ pytest --cov=src tests/
 ### Tài liệu Có sẵn
 
 #### Chung
-- [Hướng dẫn Conventional Commit](documentation/general/conventional-commit-guideline.md)
-- [Kiến trúc Hệ thống](documentation/general/architecture.md) _(Sẽ tạo)_
+- [Hướng dẫn Conventional Commit](docs/general/conventional-commit-guideline.md)
+- [Kiến trúc Hệ thống](docs/general/architecture.md) _(Sẽ tạo)_
 
 #### Gán nhãn Dữ liệu
-- [Hướng dẫn Gán nhãn Thuộc tính](documentation/data-labeling/attribute-annotation-guideline.md)
-- [Hướng dẫn Gán nhãn Cửa Container](documentation/data-labeling/container-door-labeling-guideline.md)
-- [Hướng dẫn Gán nhãn ID Container](documentation/data-labeling/id-container-labeling-guideline.md)
+- [Hướng dẫn Gán nhãn Thuộc tính](docs/data-labeling/attribute-annotation-guideline.md)
+- [Hướng dẫn Gán nhãn Cửa Container](docs/data-labeling/container-door-labeling-guideline.md)
+- [Hướng dẫn Gán nhãn ID Container](docs/data-labeling/id-container-labeling-guideline.md)
 
 #### Theo Module
 - **Module 1 (Detection)**:
-  - [Phương pháp Phân tầng Dữ liệu](documentation/modules/module-1-detection/data-splitting-methodology.md)
-  - [Đặc tả Kỹ thuật: Phân tầng Dữ liệu](documentation/modules/module-1-detection/technical-specification-data-splitting.md)
-  - [Hướng dẫn Training](documentation/modules/module-1-detection/training-guide.md) _(Sẽ tạo)_
+  - [Phương pháp Phân tầng Dữ liệu](docs/modules/module-1-detection/data-splitting-methodology.md)
+  - [Đặc tả Kỹ thuật: Phân tầng Dữ liệu](docs/modules/module-1-detection/technical-specification-data-splitting.md)
+  - [Hướng dẫn Training](docs/modules/module-1-detection/training-guide.md) _(Sẽ tạo)_
 
 ---
 
@@ -1142,4 +1208,3 @@ Dự án này được cấp phép theo **Giấy phép MIT**. Xem file [LICENSE]
 ---
 
 **Made with ❤️ for SOWATCO**
-

@@ -212,7 +212,7 @@ python src/localization/inference.py \
 
 - [YOLOv11 Pose Documentation](https://docs.ultralytics.com/tasks/pose/)
 - [COCO Keypoint Evaluation](https://cocodataset.org/#keypoints-eval)
-- Labeling Guidelines: [`documentation/data-labeling/id-container-labeling-guideline.md`](../../data-labeling/id-container-labeling-guideline.md)
+- Labeling Guidelines: [`docs/data-labeling/id-container-labeling-guideline.md`](../../data-labeling/id-container-labeling-guideline.md)
 
 ---
 

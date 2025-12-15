@@ -2,7 +2,7 @@
 
 > ⚠️ **Important:** This guide describes the **Direct Notebook workflow** with **DVC session token authentication** (current standard).
 > The older SSH tunnel method is **deprecated** as of Dec 2024 due to GPU incompatibility.
-> See `documentation/archive/deprecated-ssh-method/` for historical reference.
+> See `docs/archive/deprecated-ssh-method/` for historical reference.
 
 ## 📋 Tổng Quan
 
@@ -32,7 +32,7 @@ poetry install
 poetry shell
 
 # Develop & test
-python src/detection/train.py --config params.yaml --experiment test
+python src/detection/train_and_evaluate.py --config experiments/001_det_baseline.yaml --experiment test
 
 # Commit & push
 git add .
@@ -53,7 +53,7 @@ git push
 # (See notebook cell below)
 
 # 4. Train
-!python src/detection/train.py --config params.yaml --experiment exp001
+!python src/detection/train_and_evaluate.py --config experiments/001_det_baseline.yaml --experiment exp001
 ```
 
 ---

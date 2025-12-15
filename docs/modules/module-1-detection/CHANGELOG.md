@@ -161,6 +161,6 @@ All critical and high-priority issues from code review have been resolved. The t
 
 ---
 
-**Review Source**: `documentation/modules/module-1-detection/review.md`  
-**Detailed Report**: `documentation/modules/module-1-detection/optimization-report.md`
+**Review Source**: `docs/modules/module-1-detection/review.md`  
+**Detailed Report**: `docs/modules/module-1-detection/optimization-report.md`
 

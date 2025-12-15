@@ -436,8 +436,8 @@ print("✓ DVC session token configured")
 notebooks/kaggle_ssh_tunnel.ipynb → DELETE
 
 # Or move to archive:
-mkdir -p documentation/archive/deprecated-ssh-method/
-mv notebooks/kaggle_ssh_tunnel.ipynb documentation/archive/deprecated-ssh-method/
+mkdir -p docs/archive/deprecated-ssh-method/
+mv notebooks/kaggle_ssh_tunnel.ipynb docs/archive/deprecated-ssh-method/
 ```
 
 **Files to Update:**
@@ -448,7 +448,7 @@ scripts/setup_kaggle.sh
   → Add header: "⚠️ DEPRECATED: Use setup_kaggle_simple.sh instead"
   
 # Update technical spec
-documentation/modules/module-1-detection/technical-specification-training.md
+docs/modules/module-1-detection/technical-specification-training.md
   → Remove SSH tunnel sections (Section 3.0, Appendix 10.2)
   → Add reference to kaggle-training-workflow.md
 ```
@@ -471,7 +471,7 @@ Add comment explaining rationale.
 
 #### 4. Create Migration Guide
 
-**New File:** `documentation/modules/module-1-detection/migration-from-ssh.md`
+**New File:** `docs/modules/module-1-detection/migration-from-ssh.md`
 
 **Contents:**
 - Why SSH method was deprecated
@@ -483,12 +483,12 @@ Add comment explaining rationale.
 
 #### 5. Refactor Training Scripts
 
-**Current State:** `src/detection/train.py` designed for both local and Kaggle
+**Current State:** `src/detection/train_and_evaluate.py` designed for both local and Kaggle
 
 **Recommendation:** Explicit environment detection
 
 ```python
-# src/detection/train.py
+# src/detection/train_and_evaluate.py
 
 def detect_environment():
     """Detect if running on Kaggle or local."""
@@ -545,7 +545,7 @@ jobs:
 **Recommendation:** Single source of truth structure
 
 ```
-documentation/modules/module-1-detection/
+docs/modules/module-1-detection/
 ├── README.md                              ← Entry point
 ├── kaggle-training-workflow.md            ← This file (standard workflow)
 ├── technical-specification-training.md    ← Technical details (refactored)
