@@ -1,2 +1,0 @@
-# This file ensures the directory is tracked by Git
-# Model checkpoints (.pt files) are gitignored but directory structure is preserved

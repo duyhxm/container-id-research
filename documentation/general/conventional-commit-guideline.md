@@ -26,29 +26,31 @@ Chúng ta sử dụng mô hình **"Ba Lăng Kính" (The Tri-Lens Model)** để 
 
 *Tác động trực tiếp đến người dùng cuối hoặc kết quả đầu ra của hệ thống.*
 
-| Type | Ký hiệu | Định nghĩa Chính xác |
-| :--- | :--- | :--- |
-| **Feature** | `feat` | Bổ sung một chức năng mới, một nội dung mới hoặc một khả năng mới mà hệ thống chưa từng có. |
-| **Fix** | `fix` | Khắc phục một hành vi sai lệch, một thông tin không chính xác, hoặc một lỗi trong logic vận hành. |
+| Type        | Ký hiệu | Định nghĩa Chính xác                                                                              |
+| :---------- | :------ | :------------------------------------------------------------------------------------------------ |
+| **Feature** | `feat`  | Bổ sung một chức năng mới, một nội dung mới hoặc một khả năng mới mà hệ thống chưa từng có.       |
+| **Fix**     | `fix`   | Khắc phục một hành vi sai lệch, một thông tin không chính xác, hoặc một lỗi trong logic vận hành. |
 
 ### Nhóm II: Tác động Nội tại (Internal Structural)
 
 *Tác động đến chất lượng mã nguồn/dữ liệu nhưng bảo toàn hành vi đầu ra.*
 
-| Type | Ký hiệu | Định nghĩa Chính xác |
-| :--- | :--- | :--- |
-| **Refactor**| `refactor`| Thay đổi cấu trúc nội bộ nhằm cải thiện độ phức tạp, hiệu năng hoặc khả năng đọc hiểu, nhưng **không** thay đổi hành vi bên ngoài. |
-| **Style** | `style` | Các thay đổi về hình thức trình bày (formatting, spacing, indentation) hoàn toàn không ảnh hưởng đến logic thực thi hay ngữ nghĩa nội dung. |
+| Type         | Ký hiệu    | Định nghĩa Chính xác                                                                                                                        |
+| :----------- | :--------- | :------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Refactor** | `refactor` | Thay đổi cấu trúc nội bộ nhằm cải thiện độ phức tạp, hiệu năng hoặc khả năng đọc hiểu, nhưng **không** thay đổi hành vi bên ngoài.          |
+| **Style**    | `style`    | Các thay đổi về hình thức trình bày (formatting, spacing, indentation) hoàn toàn không ảnh hưởng đến logic thực thi hay ngữ nghĩa nội dung. |
 
 ### Nhóm III: Tác động Hỗ trợ (Meta & Supporting)
 
 *Tác động đến hệ sinh thái, quy trình và tài liệu mô tả.*
 
-| Type | Ký hiệu | Định nghĩa Chính xác |
-| :--- | :--- | :--- |
-| **Documentation**| `docs` | Thay đổi các tài liệu mô tả về hệ thống (README, Wiki, Comments) nhằm làm rõ nghĩa, không thay đổi logic hệ thống. |
-| **Chore** | `chore` | Các tác vụ bảo trì định kỳ, cập nhật công cụ, cấu hình môi trường, dependencies không ảnh hưởng đến mã nguồn sản phẩm. |
-| **Revert** | `revert` | Hoàn tác lại một commit trước đó. |
+| Type              | Ký hiệu  | Định nghĩa Chính xác                                                                                                   |
+| :---------------- | :------- | :--------------------------------------------------------------------------------------------------------------------- |
+| **Documentation** | `docs`   | Thay đổi các tài liệu mô tả về hệ thống (README, Wiki, Comments) nhằm làm rõ nghĩa, không thay đổi logic hệ thống.     |
+| **Chore**         | `chore`  | Các tác vụ bảo trì định kỳ, cập nhật công cụ, cấu hình môi trường, dependencies không ảnh hưởng đến mã nguồn sản phẩm. |
+| **Revert**        | `revert` | Hoàn tác lại một commit trước đó.                                                                                      |
+|                   |
+| **Test**          | `test`   | Thêm mới hoặc sửa đổi các bài kiểm thử (Unit test, Integration test), không ảnh hưởng đến mã nguồn sản phẩm.           |
 
 -----
 
@@ -56,14 +58,15 @@ Chúng ta sử dụng mô hình **"Ba Lăng Kính" (The Tri-Lens Model)** để 
 
 Bảng dưới đây là quy chuẩn để áp dụng các `type` vào từng lĩnh vực cụ thể, đảm bảo tính nhất quán trên toàn bộ hệ thống kỹ thuật.
 
-| Type | 💻 Software Engineering | 📄 Documentation (Wiki) | 🗄️ Data Engineering | 🧠 AI / Machine Learning |
-| :--- | :--- | :--- | :--- | :--- |
-| `feat` | Thêm tính năng, API, màn hình mới. | Thêm trang mới, chương mới. | Thêm bảng (table), nguồn dữ liệu (source), pipeline mới. | Thêm model mới, kỹ thuật training mới, feature mới. |
-| `fix` | Sửa bug, lỗi logic, lỗ hổng bảo mật. | Sửa thông tin sai, link chết (404), lỗi chính tả nghiêm trọng. | Sửa dữ liệu bẩn (data cleaning), sửa logic transform sai. | Sửa lỗi data leakage, sửa công thức tính loss function. |
-| `refactor`| Tối ưu code, tách hàm, giảm nợ kỹ thuật. | Tái cấu trúc mục lục, chia nhỏ/gộp trang, sắp xếp lại ý. | Tối ưu câu query SQL, chuẩn hóa lại schema. | Tái cấu trúc code training, modularize notebook. |
-| `style` | Linting, format code (Prettier). | Format bảng, thêm icon, căn chỉnh layout markdown. | Format script SQL, đổi tên biến cho dễ đọc. | Format code Python, sắp xếp lại cell trong Notebook. |
-| `docs` | Viết JSDoc, cập nhật README. | Viết lại câu từ cho dễ hiểu (copywriting), thêm ví dụ. | Cập nhật Data Dictionary, mô tả column. | Ghi chú experiment, giải thích model architecture. |
-| `chore` | Update library, config CI/CD. | Cập nhật sidebar, footer, config của site tài liệu. | Cập nhật quyền truy cập DB, migration script. | Cập nhật môi trường (conda env), download dataset mới. |
+| Type       | 💻 Software Engineering                   | 📄 Documentation (Wiki)                                         | 🗄️ Data Engineering                                        | 🧠 AI / Machine Learning                                 |
+| :--------- | :--------------------------------------- | :------------------------------------------------------------- | :-------------------------------------------------------- | :------------------------------------------------------ |
+| `feat`     | Thêm tính năng, API, màn hình mới.       | Thêm trang mới, chương mới.                                    | Thêm bảng (table), nguồn dữ liệu (source), pipeline mới.  | Thêm model mới, kỹ thuật training mới, feature mới.     |
+| `fix`      | Sửa bug, lỗi logic, lỗ hổng bảo mật.     | Sửa thông tin sai, link chết (404), lỗi chính tả nghiêm trọng. | Sửa dữ liệu bẩn (data cleaning), sửa logic transform sai. | Sửa lỗi data leakage, sửa công thức tính loss function. |
+| `refactor` | Tối ưu code, tách hàm, giảm nợ kỹ thuật. | Tái cấu trúc mục lục, chia nhỏ/gộp trang, sắp xếp lại ý.       | Tối ưu câu query SQL, chuẩn hóa lại schema.               | Tái cấu trúc code training, modularize notebook.        |
+| `style`    | Linting, format code (Prettier).         | Format bảng, thêm icon, căn chỉnh layout markdown.             | Format script SQL, đổi tên biến cho dễ đọc.               | Format code Python, sắp xếp lại cell trong Notebook.    |
+| `docs`     | Viết JSDoc, cập nhật README.             | Viết lại câu từ cho dễ hiểu (copywriting), thêm ví dụ.         | Cập nhật Data Dictionary, mô tả column.                   | Ghi chú experiment, giải thích model architecture.      |
+| `chore`    | Update library, config CI/CD.            | Cập nhật sidebar, footer, config của site tài liệu.            | Cập nhật quyền truy cập DB, migration script.             | Cập nhật môi trường (conda env), download dataset mới.  |
+| `test`     | Viết Unit Test, E2E Test.                | Kiểm tra link chết (link checker).                             | Viết test cho Data Quality (Great Expectations).          | Viết test kiểm tra shape của Tensor, test overfitting.  |
 
 -----
 
@@ -93,7 +96,17 @@ Nếu một thay đổi có tính chất:
 3.  Không thể định danh bằng một danh từ cụ thể.
     $\rightarrow$ **Bắt buộc bỏ trống `scope`.** Thông tin chi tiết phải được đưa vào phần Body.
 
------
+### 4.4  Quy định về thay đổi phá vỡ (BREAKING CHANGES)
+
+Khi một commit làm thay đổi API, Schema, hoặc Logic khiến các hệ thống phụ thuộc bị lỗi (không tương thích ngược), cần tuân thủ một trong hai cách sau để báo hiệu cho hệ thống Semantic Versioning:
+
+1.  **Dùng dấu chấm than (!):** Đặt ngay sau `type` hoặc `scope`.
+    *   Ví dụ: `feat(api)!: remove support for v1 endpoints`
+2.  **Dùng Footer:** Thêm dòng `BREAKING CHANGE:` ở cuối commit.
+
+**Ý nghĩa:** Commit này sẽ kích hoạt việc tăng **Major Version** (X.y.z -> **X+1**.0.0).
+
+---
 
 ## 5. THUẬT TOÁN QUYẾT ĐỊNH (DECISION ALGORITHM)
 
