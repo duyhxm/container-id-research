@@ -22,9 +22,9 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Project paths
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-MODEL_PATH = PROJECT_ROOT / "weights" / "detection" / "weights" / "best.pt"
-EXAMPLES_DIR = PROJECT_ROOT / "demo" / "examples"
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+MODEL_PATH = PROJECT_ROOT / "weights" / "detection" / "best.pt"
+EXAMPLES_DIR = Path(__file__).resolve().parent / "examples"
 
 
 class ContainerDoorDetector:
@@ -47,7 +47,7 @@ class ContainerDoorDetector:
                 "Please train the model first by running:\n"
                 "  python src/detection/train.py\n\n"
                 "Or pull the trained weights from DVC:\n"
-                "  dvc pull weights/detection/weights/best.pt.dvc"
+                "  dvc pull weights/detection/best.pt.dvc"
             )
             logger.error(error_msg)
             raise FileNotFoundError(error_msg)

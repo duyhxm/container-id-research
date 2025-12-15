@@ -80,27 +80,19 @@ def clone_repository():
 
 
 def install_dependencies():
-    """Install dependencies from pyproject.toml"""
-    log("2/10", "Installing dependencies", "STEP")
+    """Install dependencies using uv"""
+    log("2/10", "Installing dependencies with uv", "STEP")
 
-    try:
-        import tomllib as tomli
-    except ImportError:
-        try:
-            import tomli
-        except ImportError:
-            os.system("pip install -q tomli")
-            import tomli
+    # Install uv
+    run_command("pip install -q uv", "Failed to install uv")
 
-    with open("pyproject.toml", "rb") as f:
-        data = tomli.load(f)
+    # Sync dependencies
+    # --system allows installing into the system python environment (Kaggle kernel)
+    run_command(
+        "uv pip install --system -r pyproject.toml", "Failed to sync dependencies"
+    )
 
-    deps = data.get("project", {}).get("dependencies", [])
-    packages = [dep.replace(" (", "").replace(")", "") for dep in deps]
-    packages_str = " ".join([f'"{pkg}"' for pkg in packages])
-
-    run_command(f"pip install -q {packages_str}", "Failed to install dependencies")
-    log("2/10", f"Installed {len(packages)} packages")
+    log("2/10", "Dependencies installed via uv")
 
 
 def configure_dvc():
@@ -225,7 +217,7 @@ def display_config():
 
     import yaml
 
-    with open("params.yaml", "r") as f:
+    with open("experiments/001_det_baseline.yaml", "r") as f:
         params = yaml.safe_load(f)
 
     config = params["detection"]
@@ -258,12 +250,9 @@ def train_model():
     project_root = os.getcwd()
     sys.path.insert(0, project_root)
 
-    cmd = (
-        f"PYTHONPATH={project_root}:$PYTHONPATH "
-        f"python src/detection/train.py "
-        f"--config params.yaml "
-        f"--experiment {CONFIG['experiment_name']}"
-    )
+    # Use DVC to run the training stage
+    # This ensures we run exactly what is defined in dvc.yaml
+    cmd = "dvc repro train_detection"
 
     ret = os.system(cmd)
     return ret == 0
@@ -274,8 +263,8 @@ def sync_outputs():
     log("10/10", "Syncing outputs", "STEP")
 
     output_dirs = [
-        Path("weights/detection/train"),
-        Path("weights/detection/test"),
+        Path("artifacts/detection/train"),
+        Path("artifacts/detection/test"),
     ]
 
     existing_dirs = [d for d in output_dirs if d.exists()]

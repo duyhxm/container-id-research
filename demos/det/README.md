@@ -20,7 +20,7 @@ This demo provides a user-friendly interface to:
 ## Files
 
 ```
-demo/
+demos/det/
 ├── __init__.py              # Package initialization
 ├── app.py                   # Main Gradio interface
 ├── examples/                # Example images (auto-populated)
@@ -32,11 +32,11 @@ scripts/
 
 ## Prerequisites
 
-1. **Trained Model**: Model checkpoint must exist at `weights/detection/weights/best.pt`
-   - Train the model: `poetry run python src/detection/train.py`
-   - Or pull from DVC: `dvc pull weights/detection/weights/best.pt.dvc`
+1. **Trained Model**: Model checkpoint must exist at `weights/detection/best.pt`
+   - Train the model: `uv run python src/detection/train.py`
+   - Or pull from DVC: `dvc pull weights/detection/best.pt.dvc`
 
-2. **Dependencies**: Gradio is installed automatically via Poetry
+2. **Dependencies**: Gradio is installed automatically via uv
    - Already installed: `gradio ^6.1.0`
 
 ## Usage
@@ -45,7 +45,7 @@ scripts/
 
 ```powershell
 # From project root
-poetry run python scripts/run_demo.py
+uv run python scripts/run_demo.py
 ```
 
 This will:
@@ -57,7 +57,7 @@ This will:
 
 ```powershell
 # Launch without example population
-poetry run python demo/app.py
+uv run python demos/det/app.py
 ```
 
 ### Configuration Options
@@ -113,15 +113,15 @@ launch_demo(
 
 ### Model Not Found
 
-**Error**: `FileNotFoundError: Model file not found at weights/detection/weights/best.pt`
+**Error**: `FileNotFoundError: Model file not found at weights/detection/best.pt`
 
 **Solutions**:
 ```powershell
 # Option 1: Train the model
-poetry run python src/detection/train.py
+uv run python src/detection/train.py
 
 # Option 2: Pull from DVC
-dvc pull weights/detection/weights/best.pt.dvc
+dvc pull weights/detection/best.pt.dvc
 ```
 
 ### No Example Images
@@ -155,15 +155,15 @@ launch_demo(server_port=7861)  # Use different port
 
 ```powershell
 # Test imports
-poetry run python -c "from demo.app import ContainerDoorDetector; print('OK')"
+uv run python -c "from demos.det.app import ContainerDoorDetector; print('OK')"
 
 # Run with custom settings
-poetry run python demo/app.py
+uv run python demos/det/app.py
 ```
 
 ### Adding Features
 
-1. Edit `demo/app.py` for UI changes
+1. Edit `demos/det/app.py` for UI changes
 2. Modify `ContainerDoorDetector` class for inference logic
 3. Update `scripts/run_demo.py` for launcher behavior
 
@@ -178,4 +178,4 @@ poetry run python demo/app.py
 
 - [Gradio Documentation](https://gradio.app/docs/)
 - [Ultralytics YOLOv11](https://docs.ultralytics.com/)
-- [Module 1 Training Guide](../../documentation/modules/module-1-detection/kaggle-training-workflow.md)
+- [Module 1 Training Guide](../../docs/modules/module-1-detection/kaggle-training-workflow.md)
