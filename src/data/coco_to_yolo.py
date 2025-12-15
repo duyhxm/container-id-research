@@ -385,10 +385,13 @@ def main():
     parser.add_argument(
         "--category-name",
         type=str,
-        help="Category name (optional, will be inferred from params.yaml)",
+        help="Category name (optional, will be inferred from config file)",
     )
     parser.add_argument(
-        "--config", type=str, default="params.yaml", help="Path to params.yaml"
+        "--config",
+        type=str,
+        default="data/data_config.yaml",
+        help="Path to configuration file",
     )
     parser.add_argument(
         "--filter-unreadable-train",

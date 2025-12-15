@@ -3,7 +3,7 @@ Training Script for Container Door Detection (Module 1)
 
 Trains YOLOv11 model for detecting container doors with:
 - WandB experiment tracking
-- Configuration from params.yaml
+- Configuration from experiment config file
 - Early stopping
 - Checkpoint management
 """
@@ -24,7 +24,7 @@ def load_config(config_path: Path) -> Dict[str, Any]:
     Load training configuration from YAML file.
 
     Args:
-        config_path: Path to params.yaml
+        config_path: Path to configuration file
 
     Returns:
         Dictionary containing detection configuration
@@ -86,13 +86,16 @@ def initialize_wandb(config: Dict[str, Any], experiment_name: Optional[str]) -> 
     logging.info(f"WandB URL: {wandb.run.url}")
 
 
-def prepare_training_args(config: Dict[str, Any], data_yaml_abs: str) -> Dict[str, Any]:
+def prepare_training_args(
+    config: Dict[str, Any], data_yaml_abs: str, experiment_name: Optional[str] = None
+) -> Dict[str, Any]:
     """
     Prepare training arguments for Ultralytics YOLO.train().
 
     Args:
         config: Detection configuration
         data_yaml_abs: Absolute path to data.yaml file (already converted)
+        experiment_name: Name for this experiment run (used for output directory)
 
     Returns:
         Dictionary of training arguments (EXCLUDES wandb config)
@@ -101,18 +104,20 @@ def prepare_training_args(config: Dict[str, Any], data_yaml_abs: str) -> Dict[st
     train_cfg = config.get("training", {})
     aug_cfg = config.get("augmentation", {})
 
-    # Force output to weights/detection/train/ for clean directory structure
-    # This creates: weights/detection/train/weights/best.pt
-    # Separate from test outputs: weights/detection/test/
-    project_name = "weights/detection"
+    # Force output to artifacts/detection/[experiment_name]/train/ for clean directory structure
+    # This creates: artifacts/detection/[experiment_name]/train/weights/best.pt
+    # Separate from test outputs: artifacts/detection/[experiment_name]/test/
+    project_name = (
+        f"artifacts/detection/{experiment_name}"
+        if experiment_name
+        else "artifacts/detection/default"
+    )
+    run_name = "train"
 
-    # Load hardware configuration for multi-GPU support
-    from pathlib import Path as ConfigPath
-
-    import yaml as config_yaml
-
+    # Load hardware configuration from the SAME config file
+    # (Not from params.yaml, to allow experiment-specific hardware settings)
     try:
-        with open(ConfigPath("params.yaml"), "r") as f:
+        with open(config_path, "r") as f:
             full_params = config_yaml.safe_load(f)
         hardware_cfg = full_params.get("hardware", {})
     except Exception:
@@ -181,7 +186,7 @@ def prepare_training_args(config: Dict[str, Any], data_yaml_abs: str) -> Dict[st
         "copy_paste": aug_cfg.get("copy_paste", 0.0),
         # Output
         "project": project_name,
-        "name": "train",
+        "name": run_name,
         "exist_ok": True,
         "save": True,
         "save_period": 1,
@@ -209,7 +214,7 @@ def train_detection_model(
     Train YOLOv11 detection model.
 
     Args:
-        config_path: Path to params.yaml configuration file
+        config_path: Path to configuration file
         experiment_name: Name for experiment (uses config default if None)
         data_yaml: Path to dataset configuration file
 
@@ -278,7 +283,7 @@ def train_detection_model(
 
     # Prepare training arguments
     logger.info("Preparing training configuration...")
-    train_args = prepare_training_args(config, data_yaml_abs)
+    train_args = prepare_training_args(config, data_yaml_abs, experiment_name)
 
     # Ensure output directory exists (GitHub doesn't track empty folders)
     # This is critical when cloning fresh repo where weights/ may not exist
@@ -319,7 +324,7 @@ def train_detection_model(
         split="test",
         save_json=True,
         plots=True,
-        project="weights/detection",
+        project=train_args["project"],
         name="test",
         exist_ok=True,
     )
@@ -442,6 +447,14 @@ def train_detection_model(
         logger.info(f"  Precision: {final_metrics.get('test/precision', 0.0):.4f}")
         logger.info(f"  Recall: {final_metrics.get('test/recall', 0.0):.4f}")
 
+    # Save metrics to JSON
+    import json
+
+    metrics_path = output_dir / "metrics.json"
+    with open(metrics_path, "w") as f:
+        json.dump(final_metrics, f, indent=2)
+    logger.info(f"Metrics saved to {metrics_path}")
+
     logger.info("=" * 60)
     logger.info("Training Complete!")
     logger.info("=" * 60)
@@ -462,7 +475,10 @@ def main():
     )
 
     parser.add_argument(
-        "--config", type=str, default="params.yaml", help="Path to configuration file"
+        "--config",
+        type=str,
+        default="experiments/001_det_baseline.yaml",
+        help="Path to configuration file",
     )
 
     parser.add_argument(

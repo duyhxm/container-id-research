@@ -2,7 +2,7 @@
 """
 Configuration Verification Script
 
-Validates params.yaml for YOLOv11-Small training on Kaggle T4 x2.
+Validates experiment config for YOLOv11-Small training on Kaggle T4 x2.
 """
 
 import sys
@@ -11,12 +11,14 @@ from pathlib import Path
 import yaml
 
 
-def verify_configuration(config_path: Path = Path("params.yaml")) -> bool:
+def verify_configuration(
+    config_path: Path = Path("experiments/001_det_baseline.yaml"),
+) -> bool:
     """
     Verify training configuration is correct.
 
     Args:
-        config_path: Path to params.yaml
+        config_path: Path to configuration file
 
     Returns:
         True if all checks pass

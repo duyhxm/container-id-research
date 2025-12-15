@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 # Project paths
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 TEST_IMAGES_DIR = PROJECT_ROOT / "data" / "processed" / "detection" / "images" / "test"
-DEMO_EXAMPLES_DIR = PROJECT_ROOT / "demo" / "examples"
+DEMO_EXAMPLES_DIR = PROJECT_ROOT / "demos" / "det" / "examples"
 
 
 def populate_examples(
@@ -105,7 +105,7 @@ def verify_model_exists(model_path: Path) -> bool:
         logger.warning(
             f"Model not found at {model_path}\n\n"
             "Please train the model or pull from DVC:\n"
-            "  dvc pull weights/detection/weights/best.pt.dvc"
+            "  dvc pull weights/detection/best.pt.dvc"
         )
         return False
 
@@ -121,7 +121,7 @@ def main() -> None:
     logger.info("=" * 60)
 
     # Step 1: Verify model exists
-    model_path = PROJECT_ROOT / "weights" / "detection" / "weights" / "best.pt"
+    model_path = PROJECT_ROOT / "weights" / "detection" / "best.pt"
     if not verify_model_exists(model_path):
         logger.error("Cannot launch demo without trained model. Exiting.")
         return
@@ -145,7 +145,7 @@ def main() -> None:
         logger.info("=" * 60)
 
         # Import and launch demo
-        from demo.app import launch_demo
+        from demos.det.app import launch_demo
 
         launch_demo(server_name="127.0.0.1", server_port=7860, share=False)
 
