@@ -455,3 +455,27 @@ visualizations/*.jpg
 
 # GitHub Copilot configuration (local only)
 .github/
+
+# --- ARTIFACTS HANDLING ---
+# 1. Mặc định ignore tất cả trong artifacts
+artifacts/*
+
+# 2. Nhưng KHÔNG ignore (giữ lại) cấu trúc thư mục
+!artifacts/**/
+
+# 3. KHÔNG ignore các file metrics/plots (để DVC theo dõi bằng Git)
+!artifacts/**/*.json
+!artifacts/**/*.csv
+!artifacts/**/*.tsv
+!artifacts/**/*.yaml
+!artifacts/**/*.png
+!artifacts/**/*.jpg
+!artifacts/**/*.jpeg
+!artifacts/**/*.svg
+!artifacts/**/*.html
+
+# 4. Đảm bảo CHẮC CHẮN ignore các file model nặng (Double check)
+artifacts/**/*.pt
+artifacts/**/*.pth
+artifacts/**/*.onnx
+artifacts/**/*.ckpt
