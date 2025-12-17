@@ -274,9 +274,13 @@ def fetch_dataset():
         sys.exit(1)
 
     if not os.path.exists(f"{dataset_path}/images/train"):
-        result = subprocess.run("dvc pull", shell=True, capture_output=False)
+        # Pull only the dataset stages (skip train_detection outputs which don't exist yet)
+        log("6/10", "Pulling data pipeline stages...")
+        result = subprocess.run(
+            "dvc repro convert_detection --pull", shell=True, capture_output=False
+        )
         if result.returncode != 0:
-            log("6/10", "DVC pull failed", "ERROR")
+            log("6/10", "DVC data pipeline failed", "ERROR")
             sys.exit(1)
 
     # Validate dataset
