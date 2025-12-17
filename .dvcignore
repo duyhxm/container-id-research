@@ -1,3 +1,18 @@
 # Add patterns of files dvc should ignore, which could improve
 # the performance. Learn more at
 # https://dvc.org/doc/user-guide/dvcignore
+
+# ============================================================================
+# Training Debug Files (Not tracked by DVC)
+# ============================================================================
+# Intermediate checkpoints (only track best.pt and last.pt)
+**/epoch*.pt
+**/epoch*.onnx
+
+# Training batch visualization images
+**/*_batch*.jpg
+**/labels.jpg
+**/labels_correlogram.jpg
+
+# Tensorboard event files
+events.out.tfevents*

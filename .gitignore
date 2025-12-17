@@ -479,3 +479,18 @@ artifacts/**/*.pt
 artifacts/**/*.pth
 artifacts/**/*.onnx
 artifacts/**/*.ckpt
+
+# ============================================================================
+# Training Debug Files (Not needed for version control)
+# ============================================================================
+# Intermediate checkpoints (keep only best.pt and last.pt via DVC)
+**/epoch*.pt
+**/epoch*.onnx
+
+# Training visualization debug images
+**/*_batch*.jpg
+**/labels.jpg
+**/labels_correlogram.jpg
+
+# Tensorboard logs (use WandB for visualization)
+events.out.tfevents*
