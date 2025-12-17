@@ -57,3 +57,37 @@ stages:
       - localization.num_keypoints
     outs:
     - data/processed/localization
+  train_detection:
+    cmd: python src/detection/train_and_evaluate.py --config experiments/001_det_baseline.yaml 
+      --experiment detection_exp001_yolo11s_baseline
+    deps:
+    - data/processed/detection
+    - src/detection/train_and_evaluate.py
+    - experiments/001_det_baseline.yaml
+    params:
+    - experiments/001_det_baseline.yaml:
+      - detection
+    outs:
+    - artifacts/detection/detection_exp001_yolo11s_baseline/train/weights/best.pt
+    - artifacts/detection/detection_exp001_yolo11s_baseline/train/weights/last.pt
+    - artifacts/detection/detection_exp001_yolo11s_baseline/test
+    metrics:
+    - artifacts/detection/detection_exp001_yolo11s_baseline/train/metrics.json:
+        cache: false
+    plots:
+    - artifacts/detection/detection_exp001_yolo11s_baseline/train/results.csv:
+        cache: false
+    - artifacts/detection/detection_exp001_yolo11s_baseline/train/confusion_matrix.png:
+        cache: false
+    - artifacts/detection/detection_exp001_yolo11s_baseline/train/F1_curve.png:
+        cache: false
+    - artifacts/detection/detection_exp001_yolo11s_baseline/train/PR_curve.png:
+        cache: false
+    - artifacts/detection/detection_exp001_yolo11s_baseline/train/P_curve.png:
+        cache: false
+    - artifacts/detection/detection_exp001_yolo11s_baseline/train/R_curve.png:
+        cache: false
+    - artifacts/detection/detection_exp001_yolo11s_baseline/train/results.png:
+        cache: false
+    - artifacts/detection/detection_exp001_yolo11s_baseline/test/confusion_matrix.png:
+        cache: false
