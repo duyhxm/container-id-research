@@ -274,13 +274,14 @@ def fetch_dataset():
         sys.exit(1)
 
     if not os.path.exists(f"{dataset_path}/images/train"):
-        # Pull only the dataset stages (skip train_detection outputs which don't exist yet)
-        log("6/10", "Pulling data pipeline stages...")
+        # Pull processed dataset directly (already prepared locally and pushed to DVC)
+        # This avoids re-running split_data and convert_detection stages on Kaggle
+        log("6/10", "Pulling processed detection dataset from DVC...")
         result = subprocess.run(
-            "dvc repro convert_detection --pull", shell=True, capture_output=False
+            "dvc pull convert_detection", shell=True, capture_output=False
         )
         if result.returncode != 0:
-            log("6/10", "DVC data pipeline failed", "ERROR")
+            log("6/10", "DVC pull failed", "ERROR")
             sys.exit(1)
 
     # Validate dataset
