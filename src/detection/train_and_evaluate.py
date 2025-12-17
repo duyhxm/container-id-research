@@ -87,7 +87,10 @@ def initialize_wandb(config: Dict[str, Any], experiment_name: Optional[str]) -> 
 
 
 def prepare_training_args(
-    config: Dict[str, Any], data_yaml_abs: str, experiment_name: Optional[str] = None
+    config: Dict[str, Any],
+    data_yaml_abs: str,
+    experiment_name: Optional[str] = None,
+    config_path: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """
     Prepare training arguments for Ultralytics YOLO.train().
@@ -96,6 +99,7 @@ def prepare_training_args(
         config: Detection configuration
         data_yaml_abs: Absolute path to data.yaml file (already converted)
         experiment_name: Name for this experiment run (used for output directory)
+        config_path: Path to config file (needed to load hardware settings)
 
     Returns:
         Dictionary of training arguments (EXCLUDES wandb config)
@@ -116,12 +120,14 @@ def prepare_training_args(
 
     # Load hardware configuration from the SAME config file
     # (Not from params.yaml, to allow experiment-specific hardware settings)
-    try:
-        with open(config_path, "r") as f:
-            full_params = config_yaml.safe_load(f)
-        hardware_cfg = full_params.get("hardware", {})
-    except Exception:
-        hardware_cfg = {}
+    hardware_cfg = {}
+    if config_path and config_path.exists():
+        try:
+            with open(config_path, "r") as f:
+                full_params = yaml.safe_load(f)
+            hardware_cfg = full_params.get("hardware", {})
+        except Exception:
+            hardware_cfg = {}
 
     # WORKAROUND: Force single GPU due to Ultralytics bug #19519
     # Multi-GPU training (device=[0,1]) causes model.train() to return None
@@ -189,7 +195,8 @@ def prepare_training_args(
         "name": run_name,
         "exist_ok": True,
         "save": True,
-        "save_period": 1,
+        "save_period": -1,  # Only save final epoch (disable periodic saves)
+        "save_best": True,  # Save best.pt checkpoint
         "plots": True,
         "verbose": True,
         # Performance (dynamically configured)
@@ -261,29 +268,51 @@ def train_detection_model(
 
     # Initialize model
     logger.info("Initializing model...")
-    logger.info(
-        f"Loading {model_name}.pt (pretrained weights will auto-download if needed)..."
-    )
 
-    # YOLO() will auto-download pretrained weights from Ultralytics GitHub releases
-    # if not found in local cache (~/.cache/ultralytics or current directory)
-    # Explicitly use .pt extension as per official Ultralytics documentation
-    try:
-        model = YOLO(f"{model_name}.pt")
-        logger.info(f"✓ Model loaded successfully: {model_name}.pt")
-    except Exception as e:
-        logger.error(f"Failed to load model: {e}")
-        logger.info("Possible causes:")
-        logger.info("  1. Network connection issue preventing download")
+    # Check if resuming from checkpoint
+    resume_from = config["model"].get("resume_from")
+
+    if resume_from:
+        # Resume training from checkpoint
+        resume_path = Path(resume_from)
+        if not resume_path.exists():
+            logger.error(f"Resume checkpoint not found: {resume_from}")
+            raise FileNotFoundError(f"Checkpoint not found: {resume_from}")
+
+        logger.info(f"📂 RESUME MODE: Loading checkpoint from {resume_from}")
+        logger.info("   This will continue training from the saved state.")
+        try:
+            model = YOLO(str(resume_path))
+            logger.info(f"✓ Checkpoint loaded successfully")
+        except Exception as e:
+            logger.error(f"Failed to load checkpoint: {e}")
+            raise
+    else:
+        # Train from scratch with pretrained weights
         logger.info(
-            "  2. Invalid model name (available: yolo11n, yolo11s, yolo11m, yolo11l, yolo11x)"
+            f"🆕 FRESH TRAINING: Loading {model_name}.pt (pretrained weights will auto-download if needed)..."
         )
-        logger.info("  3. Corrupted cache (~/.cache/ultralytics)")
-        raise
+        # YOLO() will auto-download pretrained weights from Ultralytics GitHub releases
+        # if not found in local cache (~/.cache/ultralytics or current directory)
+        # Explicitly use .pt extension as per official Ultralytics documentation
+        try:
+            model = YOLO(f"{model_name}.pt")
+            logger.info(f"✓ Model loaded successfully: {model_name}.pt")
+        except Exception as e:
+            logger.error(f"Failed to load model: {e}")
+            logger.info("Possible causes:")
+            logger.info("  1. Network connection issue preventing download")
+            logger.info(
+                "  2. Invalid model name (available: yolo11n, yolo11s, yolo11m, yolo11l, yolo11x)"
+            )
+            logger.info("  3. Corrupted cache (~/.cache/ultralytics)")
+            raise
 
     # Prepare training arguments
     logger.info("Preparing training configuration...")
-    train_args = prepare_training_args(config, data_yaml_abs, experiment_name)
+    train_args = prepare_training_args(
+        config, data_yaml_abs, experiment_name, config_path
+    )
 
     # Ensure output directory exists (GitHub doesn't track empty folders)
     # This is critical when cloning fresh repo where weights/ may not exist
