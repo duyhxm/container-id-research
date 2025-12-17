@@ -57,35 +57,21 @@ stages:
       - localization.num_keypoints
     outs:
     - data/processed/localization
-  train_detection:
-    cmd: python src/detection/train_and_evaluate.py --config experiments/001_det_baseline.yaml 
-      --experiment detection_exp001_yolo11s_baseline
-    deps:
-    - data/processed/detection
-    - src/detection/train_and_evaluate.py
-    - experiments/001_det_baseline.yaml
-    params:
-    - experiments/001_det_baseline.yaml:
-      - detection
-    outs:
-    - artifacts/detection/detection_exp001_yolo11s_baseline/train/weights/best.pt
-    - artifacts/detection/detection_exp001_yolo11s_baseline/train/weights/last.pt
-    - artifacts/detection/detection_exp001_yolo11s_baseline/test
-    metrics:
-    - artifacts/detection/detection_exp001_yolo11s_baseline/train/metrics.json:
-        cache: false
-    plots:
-    - artifacts/detection/detection_exp001_yolo11s_baseline/train/results.csv:
-        cache: false
-    - artifacts/detection/detection_exp001_yolo11s_baseline/train/confusion_matrix.png:
-        cache: false
-    - artifacts/detection/detection_exp001_yolo11s_baseline/train/F1_curve.png:
-        cache: false
-    - artifacts/detection/detection_exp001_yolo11s_baseline/train/PR_curve.png:
-        cache: false
-    - artifacts/detection/detection_exp001_yolo11s_baseline/train/P_curve.png:
-        cache: false
-    - artifacts/detection/detection_exp001_yolo11s_baseline/train/R_curve.png:
-        cache: false
-    - artifacts/detection/detection_exp001_yolo11s_baseline/train/results.png:
-        cache: false
+
+# ============================================================================
+# TRAINING STAGES REMOVED
+# ============================================================================
+# Training is now executed as standalone scripts (NOT DVC stages)
+# Rationale:
+#   1. Separation of Concerns: Data pipeline vs Training
+#   2. Multi-environment: Training can run on local/Kaggle/cloud
+#   3. Experiment Tracking: WandB handles metrics/plots
+#   4. Simplicity: No dependency chain validation issues
+#
+# To train detection model:
+#   python src/detection/train_and_evaluate.py --config experiments/001_det_baseline.yaml
+#
+# Model versioning (manual):
+#   dvc add artifacts/detection/.../train/weights/best.pt
+#   git add artifacts/detection/.../train/weights/best.pt.dvc
+#   git commit -m "feat(model): trained YOLOv11s baseline"

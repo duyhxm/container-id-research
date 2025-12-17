@@ -273,6 +273,15 @@ def fetch_dataset():
         log("6/10", "dvc.lock not found", "ERROR")
         sys.exit(1)
 
+    # Pull base data dependencies (annotations) to satisfy DVC pipeline requirements
+    # Note: We skip data/raw.dvc (large images) as we only need processed outputs
+    log("6/10", "Pulling base data dependencies (annotations)...")
+    result = subprocess.run(
+        "dvc pull data/annotations.dvc", shell=True, capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        log("6/10", f"Warning: Could not pull annotations: {result.stderr}", "WARN")
+
     if not os.path.exists(f"{dataset_path}/images/train"):
         # Pull processed dataset directly (already prepared locally and pushed to DVC)
         # This avoids re-running split_data and convert_detection stages on Kaggle
@@ -326,12 +335,17 @@ def download_pretrained_weights():
 
 
 def train_model():
-    """Execute training via DVC pipeline"""
+    """Execute training via standalone script (NOT DVC pipeline)"""
     log("9/10", "Starting training", "STEP")
     print("=" * 70)
     print("⏱️  Training: ~3-4 hours")
     print("📊 WandB URL will be displayed when training starts")
     print("=" * 70)
+    print("")
+    print("💡 Architecture:")
+    print("   - Data Pipeline: DVC (split_data → convert_detection)")
+    print("   - Training: Standalone script (tracked by WandB)")
+    print("   - Model Versioning: Manual DVC add after training")
     print("")
     print("💡 Training mode (fresh/resume) is controlled by config file:")
     print("   experiments/001_det_baseline.yaml → detection.model.resume_from")
@@ -342,9 +356,19 @@ def train_model():
     project_root = os.getcwd()
     sys.path.insert(0, project_root)
 
-    # ALWAYS use DVC to ensure reproducibility and tracking
-    # Training mode (fresh/resume) is determined by config file
-    cmd = "dvc repro train_detection"
+    # Run training script directly (NOT via DVC pipeline)
+    # Rationale:
+    #   ✅ Training is independent from data pipeline
+    #   ✅ Can run on any environment (local/Kaggle/cloud)
+    #   ✅ WandB tracks all metrics/plots/artifacts
+    #   ✅ No dependency chain validation issues
+    #   ✅ Model versioning done manually via dvc add
+    log("9/10", "Executing standalone training script...")
+    cmd = (
+        f"python src/detection/train_and_evaluate.py "
+        f"--config experiments/001_det_baseline.yaml "
+        f"--experiment {CONFIG['experiment_name']}"
+    )
 
     result = subprocess.run(cmd, shell=True, capture_output=False)
     return result.returncode == 0
@@ -354,14 +378,17 @@ def sync_outputs():
     """Sync trained models to DVC and GitHub"""
     log("10/10", "Syncing outputs", "STEP")
 
+    # Use experiment name from CONFIG to locate outputs
+    experiment_path = Path(f"artifacts/detection/{CONFIG['experiment_name']}")
     output_dirs = [
-        Path("artifacts/detection/train"),
-        Path("artifacts/detection/test"),
+        experiment_path / "train",
+        experiment_path / "test",
     ]
 
     existing_dirs = [d for d in output_dirs if d.exists()]
     if not existing_dirs:
         log("10/10", "No outputs found", "WARN")
+        log("10/10", f"Expected location: {experiment_path}", "WARN")
         return
 
     # Scan for models and artifacts
@@ -369,7 +396,10 @@ def sync_outputs():
     git_artifacts = []
 
     for output_dir in existing_dirs:
-        # Find best.pt and last.pt (both needed for resume training)
+        # Find BOTH best.pt and last.pt
+        # - best.pt: Best model (highest validation mAP) → for production deployment
+        # - last.pt: Latest checkpoint → for resuming training if interrupted
+        # Both files are tracked to DVC for versioning and backup
         for loc in [
             output_dir / "best.pt",
             output_dir / "last.pt",
@@ -397,18 +427,28 @@ def sync_outputs():
 
     log("10/10", f"Found {len(model_files)} models, {len(git_artifacts)} artifacts")
 
-    # DVC push
+    # Manual DVC tracking for trained models
     if model_files:
+        log("10/10", "Adding models to DVC tracking...")
         for model_file in model_files:
-            subprocess.run(
-                f'dvc add "{model_file}"', shell=True, capture_output=True, check=False
+            result = subprocess.run(
+                f'dvc add "{model_file}"',
+                shell=True,
+                capture_output=True,
+                text=True,
+                check=False,
             )
+            if result.returncode == 0:
+                log("10/10", f"  ✅ Tracked: {Path(model_file).name}")
+            else:
+                log("10/10", f"  ⚠️ Failed to track: {Path(model_file).name}", "WARN")
 
+        log("10/10", "Pushing models to Google Drive via DVC...")
         result = subprocess.run("dvc push", shell=True, capture_output=False)
         if result.returncode == 0:
-            log("10/10", "Models pushed to Google Drive")
+            log("10/10", "✅ Models pushed to Google Drive")
         else:
-            log("10/10", "DVC push failed - download from Kaggle Output", "WARN")
+            log("10/10", "⚠️ DVC push failed - download from Kaggle Output", "WARN")
 
     # Git push
     if os.environ.get("SKIP_GIT_PUSH") == "1":
@@ -417,7 +457,7 @@ def sync_outputs():
 
     files_to_commit = []
 
-    # Stage .dvc files
+    # Stage .dvc files (created by dvc add above)
     for model_file in model_files:
         dvc_file = f"{model_file}.dvc"
         if Path(dvc_file).exists():
@@ -425,15 +465,16 @@ def sync_outputs():
                 f'git add "{dvc_file}"', shell=True, capture_output=True, check=False
             )
             files_to_commit.append(dvc_file)
+            log("10/10", f"  📝 Added: {Path(dvc_file).name}")
 
-    # Stage .gitignore
+    # Stage .gitignore (if updated by DVC)
     if Path(".gitignore").exists():
         subprocess.run(
             'git add ".gitignore"', shell=True, capture_output=True, check=False
         )
         files_to_commit.append(".gitignore")
 
-    # Stage artifacts
+    # Stage artifacts (metrics, plots tracked by Git, not DVC)
     for artifact in git_artifacts:
         subprocess.run(
             f'git add "{artifact}"', shell=True, capture_output=True, check=False
