@@ -9,6 +9,7 @@ dependencies = [
     "dvc[gdrive]>=3.64.2",
     "gradio>=6.1.0",
     "ipykernel>=7.1.0",
+    "kaggle>=1.8.2",
     "matplotlib>=3.10.8",
     "opencv-python>=4.12.0.88",
     "pandas>=2.3.3",
