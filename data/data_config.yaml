@@ -1,0 +1,126 @@
+# Data Pipeline Configuration
+# Container ID Extraction Research Project
+# Configuration for data splitting, stratification, and conversion
+
+# ============================================================================
+# DATA SPLITTING PARAMETERS
+# ============================================================================
+split:
+  # Random seed for reproducibility
+  seed: 42
+  
+  # Split ratios (must sum to 1.0)
+  train_ratio: 0.70
+  val_ratio: 0.15
+  test_ratio: 0.15
+  
+  # Minimum number of instances to avoid singleton handling
+  # Groups with fewer instances will trigger augmentation
+  min_instances: 2
+
+# ============================================================================
+# STRATIFICATION PARAMETERS
+# ============================================================================
+stratification:
+  # Environment factors (hard category)
+  # Images with any of these attributes are prioritized
+  r_env:
+    - bad_light
+    - occluded
+    - not_clean
+  
+  # Geometric/sensor factors (tricky category)
+  # Images with these attributes (but no r_env) are secondary priority
+  r_geo:
+    - frontal
+    - blurry
+  
+  # Stratification groups
+  groups:
+    hard: r_env_present
+    tricky: r_geo_present_only
+    common: neither
+
+# ============================================================================
+# AUGMENTATION PARAMETERS (for singleton handling)
+# ============================================================================
+augmentation:
+  # Augmentation strategy for rare samples
+  # NOTE: NO horizontal flip for text/ID data (creates mirrored text)
+  strategies:
+    - shift_scale_rotate
+    - random_brightness_contrast
+    - motion_blur
+  
+  # Albumentations parameters
+  shift_scale_rotate:
+    shift_limit: 0.05
+    scale_limit: 0.1
+    rotate_limit: 5  # Small rotation only
+    p: 0.7
+  
+  random_brightness_contrast:
+    brightness_limit: 0.1
+    contrast_limit: 0.1
+    p: 0.5
+  
+  motion_blur:
+    blur_limit: 3
+    p: 0.3
+  
+  # Output naming convention
+  prefix: aug_
+
+# ============================================================================
+# MODULE 1: CONTAINER DOOR DETECTION (Data Config)
+# ============================================================================
+detection:
+  # COCO category information (Used by coco_to_yolo.py)
+  category_name: container_door
+  category_id: 1
+  
+  # Image preprocessing
+  img_size: 640  # YOLO input size
+
+# ============================================================================
+# MODULE 3: CONTAINER ID LOCALIZATION (Data Config)
+# ============================================================================
+localization:
+  # COCO category information (Used by coco_to_yolo.py)
+  category_name: container_id
+  category_id: 2
+  
+  # Keypoints configuration
+  num_keypoints: 4  # 4-point polygon (TL, TR, BR, BL)
+  keypoint_names:
+    - top_left
+    - top_right
+    - bottom_right
+    - bottom_left
+  
+  # Filter strategy
+  filter_unreadable: true  # Remove unreadable samples from training
+  
+  # Image preprocessing
+  img_size: 640
+
+# ============================================================================
+# PATHS (Relative to project root)
+# ============================================================================
+paths:
+  # Data directories
+  raw_data: data/raw
+  annotations: data/annotations
+  interim_data: data/interim
+  processed_data: data/processed
+  
+  # Output directories
+  weights: weights
+  experiments: experiments
+  logs: logs
+  
+  # Specific dataset paths
+  detection_dataset: data/processed/detection
+  localization_dataset: data/processed/localization
+  quality_dataset: data/processed/quality
+  ocr_dataset: data/processed/ocr

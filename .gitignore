@@ -298,6 +298,7 @@ pyrightconfig.json
 data/*
 !data/*.dvc
 !data/.gitignore
+!data/data_config.yaml
 
 # ============================================================================
 # EXPERIMENT TRACKING
