@@ -194,9 +194,8 @@ def prepare_training_args(
         "project": project_name,
         "name": run_name,
         "exist_ok": True,
-        "save": True,
+        "save": True,  # Save checkpoints (best.pt + last.pt saved automatically)
         "save_period": -1,  # Only save final epoch (disable periodic saves)
-        "save_best": True,  # Save best.pt checkpoint
         "plots": True,
         "verbose": True,
         # Performance (dynamically configured)
