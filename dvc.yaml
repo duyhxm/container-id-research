@@ -1,6 +1,8 @@
 stages:
   split_data:
-    cmd: python src/data/stratification.py --config data/data_config.yaml --annotation-path data/annotations/annotations-coco-1.0.json --output-dir data/interim
+    cmd: python src/data/stratification.py --config data/data_config.yaml 
+      --annotation-path data/annotations/annotations-coco-1.0.json --output-dir 
+      data/interim
     deps:
     - data/annotations/annotations-coco-1.0.json
     - src/data/augmentation.py
@@ -25,7 +27,9 @@ stages:
     - data/interim/train_master.json
     - data/interim/val_master.json
   convert_detection:
-    cmd: python src/data/coco_to_yolo.py --task detection --input data/interim --output data/processed/detection --category-id 1 --category-name container_door --config data/data_config.yaml
+    cmd: python src/data/coco_to_yolo.py --task detection --input data/interim 
+      --output data/processed/detection --category-id 1 --category-name 
+      container_door --config data/data_config.yaml
     deps:
     - data/interim/test_master.json
     - data/interim/train_master.json
@@ -38,7 +42,9 @@ stages:
     outs:
     - data/processed/detection
   convert_localization:
-    cmd: python src/data/coco_to_yolo.py --task pose --input data/interim --output data/processed/localization --category-id 2 --category-name container_id --config data/data_config.yaml
+    cmd: python src/data/coco_to_yolo.py --task pose --input data/interim 
+      --output data/processed/localization --category-id 2 --category-name 
+      container_id --config data/data_config.yaml
     deps:
     - data/interim/test_master.json
     - data/interim/train_master.json
@@ -51,35 +57,3 @@ stages:
       - localization.num_keypoints
     outs:
     - data/processed/localization
-  train_detection:
-    cmd: python src/detection/train_and_evaluate.py --config experiments/001_det_baseline.yaml --experiment detection_exp001_yolo11s_baseline
-    deps:
-    - data/processed/detection
-    - src/detection/train_and_evaluate.py
-    - experiments/001_det_baseline.yaml
-    params:
-    - experiments/001_det_baseline.yaml:
-      - detection
-    outs:
-    - artifacts/detection/detection_exp001_yolo11s_baseline/train/weights/best.pt
-    - artifacts/detection/detection_exp001_yolo11s_baseline/test
-    metrics:
-    - artifacts/detection/detection_exp001_yolo11s_baseline/train/metrics.json:
-        cache: false
-    plots:
-    - artifacts/detection/detection_exp001_yolo11s_baseline/train/results.csv:
-        cache: false
-    - artifacts/detection/detection_exp001_yolo11s_baseline/train/confusion_matrix.png:
-        cache: false
-    - artifacts/detection/detection_exp001_yolo11s_baseline/train/F1_curve.png:
-        cache: false
-    - artifacts/detection/detection_exp001_yolo11s_baseline/train/PR_curve.png:
-        cache: false
-    - artifacts/detection/detection_exp001_yolo11s_baseline/train/P_curve.png:
-        cache: false
-    - artifacts/detection/detection_exp001_yolo11s_baseline/train/R_curve.png:
-        cache: false
-    - artifacts/detection/detection_exp001_yolo11s_baseline/train/results.png:
-        cache: false
-    - artifacts/detection/detection_exp001_yolo11s_baseline/test/confusion_matrix.png:
-        cache: false
