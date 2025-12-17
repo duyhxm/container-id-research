@@ -89,5 +89,3 @@ stages:
         cache: false
     - artifacts/detection/detection_exp001_yolo11s_baseline/train/results.png:
         cache: false
-    - artifacts/detection/detection_exp001_yolo11s_baseline/test/confusion_matrix.png:
-        cache: false
