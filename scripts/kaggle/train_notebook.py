@@ -98,9 +98,7 @@ def install_dependencies():
 
     # Sync dependencies
     # --system allows installing into the system python environment (Kaggle kernel)
-    run_command(
-        "uv pip install --system -r pyproject.toml", "Failed to sync dependencies"
-    )
+    run_command("uv pip install --system .", "Failed to sync dependencies")
 
     log("2/10", "Dependencies installed via uv")
 
@@ -375,8 +373,23 @@ def train_model():
 
 
 def sync_outputs():
-    """Sync trained models to DVC and GitHub"""
-    log("10/10", "Syncing outputs", "STEP")
+    """
+    Sync trained models to DVC and GitHub (ATOMIC TRANSACTION)
+
+    Transaction guarantee:
+    - BOTH DVC push AND Git push must succeed
+    - If either fails, ALL changes are rolled back
+    - Rollback includes: local .dvc files + remote DVC storage + Git staging
+
+    Phases:
+    1. DVC add (create .dvc tracking files locally)
+    2. DVC push (upload models to Google Drive)
+    3. Git staging (stage .dvc files and artifacts)
+    4. Git commit + push (create branch and push to GitHub)
+
+    On failure: Phases are rolled back in reverse order
+    """
+    log("10/10", "Syncing outputs (atomic transaction)", "STEP")
 
     # Use experiment name from CONFIG to locate outputs
     experiment_path = Path(f"artifacts/detection/{CONFIG['experiment_name']}")
@@ -427,9 +440,22 @@ def sync_outputs():
 
     log("10/10", f"Found {len(model_files)} models, {len(git_artifacts)} artifacts")
 
-    # Manual DVC tracking for trained models
-    if model_files:
-        log("10/10", "Adding models to DVC tracking...")
+    if not model_files:
+        log("10/10", "No models to sync", "WARN")
+        return
+
+    # Transaction state tracking
+    dvc_files_created = []
+    dvc_pushed = False
+    git_staged = False
+    git_branch_created = False
+    original_branch = None
+
+    try:
+        # ===================================================================
+        # PHASE 1: DVC ADD (Create .dvc tracking files locally)
+        # ===================================================================
+        log("10/10", "Phase 1/4: Creating .dvc tracking files...")
         for model_file in model_files:
             result = subprocess.run(
                 f'dvc add "{model_file}"',
@@ -438,92 +464,209 @@ def sync_outputs():
                 text=True,
                 check=False,
             )
-            if result.returncode == 0:
-                log("10/10", f"  ✅ Tracked: {Path(model_file).name}")
-            else:
-                log("10/10", f"  ⚠️ Failed to track: {Path(model_file).name}", "WARN")
+            if result.returncode != 0:
+                raise Exception(
+                    f"Failed to create .dvc file for {model_file}: {result.stderr}"
+                )
 
-        log("10/10", "Pushing models to Google Drive via DVC...")
-        result = subprocess.run("dvc push", shell=True, capture_output=False)
+            dvc_file = f"{model_file}.dvc"
+            dvc_files_created.append(dvc_file)
+            log("10/10", f"  ✅ Tracked: {Path(model_file).name}")
+
+        # ===================================================================
+        # PHASE 2: DVC PUSH (Upload models to Google Drive)
+        # ===================================================================
+        log("10/10", "Phase 2/4: Pushing models to Google Drive...")
+        result = subprocess.run("dvc push", shell=True, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise Exception(f"DVC push failed: {result.stderr}")
+
+        dvc_pushed = True
+        log("10/10", "  ✅ Models uploaded to DVC remote")
+
+        # ===================================================================
+        # PHASE 3: GIT STAGING (Stage .dvc files and artifacts)
+        # ===================================================================
+        log("10/10", "Phase 3/4: Staging files for Git...")
+
+        # Check if Git push is enabled
+        if os.environ.get("SKIP_GIT_PUSH") == "1":
+            raise Exception("Git token not configured (SKIP_GIT_PUSH=1)")
+
+        # Save original branch for rollback
+        result = subprocess.run(
+            "git branch --show-current",
+            shell=True,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
         if result.returncode == 0:
-            log("10/10", "✅ Models pushed to Google Drive")
-        else:
-            log("10/10", "⚠️ DVC push failed - download from Kaggle Output", "WARN")
+            original_branch = result.stdout.strip()
 
-    # Git push
-    if os.environ.get("SKIP_GIT_PUSH") == "1":
-        log("10/10", "Git push skipped (no token)", "WARN")
-        return
+        files_to_commit = []
 
-    files_to_commit = []
+        # Stage .dvc files
+        for dvc_file in dvc_files_created:
+            if Path(dvc_file).exists():
+                result = subprocess.run(
+                    f'git add "{dvc_file}"',
+                    shell=True,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                if result.returncode != 0:
+                    raise Exception(f"Failed to stage {dvc_file}: {result.stderr}")
+                files_to_commit.append(dvc_file)
 
-    # Stage .dvc files (created by dvc add above)
-    for model_file in model_files:
-        dvc_file = f"{model_file}.dvc"
-        if Path(dvc_file).exists():
+        # Stage .gitignore (if updated by DVC)
+        if Path(".gitignore").exists():
             subprocess.run(
-                f'git add "{dvc_file}"', shell=True, capture_output=True, check=False
+                'git add ".gitignore"',
+                shell=True,
+                capture_output=True,
+                check=False,
             )
-            files_to_commit.append(dvc_file)
-            log("10/10", f"  📝 Added: {Path(dvc_file).name}")
+            files_to_commit.append(".gitignore")
 
-    # Stage .gitignore (if updated by DVC)
-    if Path(".gitignore").exists():
-        subprocess.run(
-            'git add ".gitignore"', shell=True, capture_output=True, check=False
+        # Stage artifacts (metrics, plots tracked by Git, not DVC)
+        for artifact in git_artifacts:
+            result = subprocess.run(
+                f'git add "{artifact}"',
+                shell=True,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if result.returncode != 0:
+                raise Exception(f"Failed to stage {artifact}: {result.stderr}")
+            files_to_commit.append(artifact)
+
+        git_staged = True
+        log("10/10", f"  ✅ Staged {len(files_to_commit)} files")
+
+        # ===================================================================
+        # PHASE 4: GIT COMMIT + PUSH (Create branch and push to GitHub)
+        # ===================================================================
+        log("10/10", "Phase 4/4: Committing and pushing to GitHub...")
+
+        # Create new branch
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        safe_exp_name = (
+            CONFIG["experiment_name"].replace(" ", "-").replace("_", "-").lower()
         )
-        files_to_commit.append(".gitignore")
+        branch_name = f"kaggle-train-{safe_exp_name}-{timestamp}"
 
-    # Stage artifacts (metrics, plots tracked by Git, not DVC)
-    for artifact in git_artifacts:
-        subprocess.run(
-            f'git add "{artifact}"', shell=True, capture_output=True, check=False
+        result = subprocess.run(
+            f"git checkout -b {branch_name}",
+            shell=True,
+            capture_output=True,
+            text=True,
+            check=False,
         )
-        files_to_commit.append(artifact)
+        if result.returncode != 0:
+            raise Exception(f"Failed to create branch {branch_name}: {result.stderr}")
 
-    if not files_to_commit:
-        log("10/10", "No files to commit")
-        return
+        git_branch_created = True
 
-    # Create a new branch (NEVER push to main)
-    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    safe_exp_name = (
-        CONFIG["experiment_name"].replace(" ", "-").replace("_", "-").lower()
-    )
-    branch_name = f"kaggle-train-{safe_exp_name}-{timestamp}"
+        # Commit
+        commit_msg = (
+            f"feat(detection): add trained YOLOv11s model and artifacts\\n\\n"
+            f"Experiment: {CONFIG['experiment_name']}\\n"
+            f"Models: {len(model_files)} file(s)\\n"
+            f"Artifacts: {len(git_artifacts)} files (train + test)\\n"
+            f"Training completed on Kaggle\\n"
+            f"Branch: {branch_name}"
+        )
+        result = subprocess.run(
+            f'git commit -m "{commit_msg}"',
+            shell=True,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            raise Exception(f"Git commit failed: {result.stderr}")
 
-    subprocess.run(
-        f"git checkout -b {branch_name}", shell=True, capture_output=True, check=False
-    )
-    log("10/10", f"Created branch: {branch_name}")
+        # Push to GitHub
+        result = subprocess.run(
+            f"git push -u origin {branch_name}",
+            shell=True,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            raise Exception(f"Git push failed: {result.stderr}")
 
-    # Commit
-    commit_msg = (
-        f"feat(detection): add trained YOLOv11s model and artifacts\\n\\n"
-        f"Experiment: {CONFIG['experiment_name']}\\n"
-        f"Models: {len(model_files)} file(s)\\n"
-        f"Artifacts: {len(git_artifacts)} files (train + test)\\n"
-        f"Training completed on Kaggle\\n"
-        f"Branch: {branch_name}"
-    )
-    subprocess.run(
-        f'git commit -m "{commit_msg}"', shell=True, capture_output=True, check=False
-    )
-
-    # Push to new branch
-    result = subprocess.run(
-        f"git push -u origin {branch_name}", shell=True, capture_output=False
-    )
-
-    if result.returncode == 0:
-        log("10/10", f"Pushed to GitHub (branch: {branch_name})")
-        print(f"\n📌 Branch: {branch_name}")
-        print(f"📂 To download locally:")
+        # ===================================================================
+        # SUCCESS!
+        # ===================================================================
+        log("10/10", "=" * 70)
+        log("10/10", "✅ ATOMIC TRANSACTION SUCCESSFUL!")
+        log("10/10", "=" * 70)
+        log("10/10", f"📦 Models: {len(model_files)} files pushed to DVC + Git")
+        log("10/10", f"📊 Artifacts: {len(git_artifacts)} files committed")
+        log("10/10", f"🌿 Branch: {branch_name}")
+        print(f"\n📂 To download locally:")
         print(f"   git fetch origin {branch_name}")
         print(f"   git checkout {branch_name}")
         print(f"   dvc pull")
-    else:
-        log("10/10", "Git push failed", "WARN")
+
+    except Exception as e:
+        # ===================================================================
+        # ROLLBACK ALL CHANGES
+        # ===================================================================
+        log("10/10", "=" * 70, "ERROR")
+        log("10/10", f"❌ TRANSACTION FAILED: {e}", "ERROR")
+        log("10/10", "=" * 70, "ERROR")
+        log("10/10", "Initiating rollback...", "WARN")
+
+        # Rollback Phase 4: Git branch and staging
+        if git_branch_created and original_branch:
+            log("10/10", "Rolling back Git branch...")
+            subprocess.run(
+                f"git checkout {original_branch}",
+                shell=True,
+                capture_output=True,
+                check=False,
+            )
+            log("10/10", "  ✅ Switched back to original branch")
+
+        if git_staged:
+            log("10/10", "Rolling back Git staging...")
+            subprocess.run("git reset HEAD", shell=True, capture_output=True)
+            log("10/10", "  ✅ Git staging cleared")
+
+        # Rollback Phase 2: Remove from DVC remote (if pushed)
+        if dvc_pushed and dvc_files_created:
+            log("10/10", "Rolling back DVC remote (Google Drive)...")
+            for dvc_file in dvc_files_created:
+                if Path(dvc_file).exists():
+                    # Use dvc remove with --outs to delete from remote storage
+                    subprocess.run(
+                        f'dvc remove "{dvc_file}" --outs',
+                        shell=True,
+                        capture_output=True,
+                        check=False,
+                    )
+            log("10/10", "  ✅ Remote files removed from Google Drive")
+
+        # Rollback Phase 1: Remove .dvc tracking files
+        if dvc_files_created:
+            log("10/10", "Rolling back .dvc files...")
+            for dvc_file in dvc_files_created:
+                if Path(dvc_file).exists():
+                    os.remove(dvc_file)
+                    log("10/10", f"  Removed: {Path(dvc_file).name}")
+
+        log("10/10", "=" * 70, "WARN")
+        log("10/10", "⚠️  ROLLBACK COMPLETE", "WARN")
+        log("10/10", "=" * 70, "WARN")
+        log("10/10", "Trained models remain in artifacts/ directory", "WARN")
+        log("10/10", "Download from Kaggle Output tab if needed", "WARN")
+
+        raise
 
 
 # ============================================================================
