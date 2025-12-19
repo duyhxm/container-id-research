@@ -1,7 +1,7 @@
 schema: '2.0'
 stages:
   split_data:
-    cmd: python src/data/stratification.py --config params.yaml 
+    cmd: python src/data/stratification.py --config data/data_config.yaml 
       --annotation-path data/annotations/annotations-coco-1.0.json --output-dir 
       data/interim
     deps:
@@ -11,14 +11,14 @@ stages:
       size: 384509
     - path: src/data/augmentation.py
       hash: md5
-      md5: 3e520471b6e517f65a6b4ca8ee9f08c6
-      size: 10822
+      md5: 1c94e035609aed63b225e610aeb04628
+      size: 10340
     - path: src/data/stratification.py
       hash: md5
-      md5: 7414b290f761e53043ffcd786f483b3e
-      size: 24554
+      md5: 9c5427ddce244b84a41a014450561dd6
+      size: 23588
     params:
-      params.yaml:
+      data/data_config.yaml:
         augmentation.motion_blur:
           blur_limit: 3
           p: 0.3
@@ -69,7 +69,7 @@ stages:
   convert_detection:
     cmd: python src/data/coco_to_yolo.py --task detection --input data/interim 
       --output data/processed/detection --category-id 1 --category-name 
-      container_door --config params.yaml
+      container_door --config data/data_config.yaml
     deps:
     - path: data/interim/test_master.json
       hash: md5
@@ -85,10 +85,10 @@ stages:
       size: 108193
     - path: src/data/coco_to_yolo.py
       hash: md5
-      md5: d3dc49b3e47f47819ff2c33de2f04152
-      size: 15047
+      md5: 89105f555d7e9c87b358c3185b969b2c
+      size: 15108
     params:
-      params.yaml:
+      data/data_config.yaml:
         detection.category_id: 1
         detection.category_name: container_door
     outs:
@@ -100,7 +100,7 @@ stages:
   convert_localization:
     cmd: python src/data/coco_to_yolo.py --task pose --input data/interim 
       --output data/processed/localization --category-id 2 --category-name 
-      container_id --config params.yaml
+      container_id --config data/data_config.yaml
     deps:
     - path: data/interim/test_master.json
       hash: md5
@@ -116,10 +116,10 @@ stages:
       size: 108193
     - path: src/data/coco_to_yolo.py
       hash: md5
-      md5: d3dc49b3e47f47819ff2c33de2f04152
-      size: 15047
+      md5: 89105f555d7e9c87b358c3185b969b2c
+      size: 15108
     params:
-      params.yaml:
+      data/data_config.yaml:
         localization.category_id: 2
         localization.category_name: container_id
         localization.num_keypoints: 4
