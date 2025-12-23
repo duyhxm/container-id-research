@@ -77,8 +77,8 @@ stages:
       size: 111222
     - path: data/interim/train_master.json
       hash: md5
-      md5: 9dc3da510e3bb7c38dec88e83b4d8de1
-      size: 501508
+      md5: 8f3693b8f6dadd62ec2652ee465c2ff7
+      size: 501485
     - path: data/interim/val_master.json
       hash: md5
       md5: 2229a1f562f7a437fab112ed3151a5c2
@@ -94,8 +94,8 @@ stages:
     outs:
     - path: data/processed/detection
       hash: md5
-      md5: 9eb252e171114e374a9b6e6aa066518f.dir
-      size: 202637224
+      md5: 28b1b5d09bdb8d3ea0df0cd72c72565d.dir
+      size: 202779575
       nfiles: 1005
   convert_localization:
     cmd: python scripts/data_processing/prepare_module_3_data.py --input 
