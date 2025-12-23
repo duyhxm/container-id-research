@@ -39,6 +39,7 @@ logger = logging.getLogger(__name__)
 
 # Constants
 FILTER_VALUES = {"unreadable", "unknown"}  # OCR feasibility values to filter
+TOLERANCE = 1e-6  # Floating-point tolerance for keypoint boundary validation
 
 
 class Module3DataPreparator:
@@ -153,15 +154,20 @@ class Module3DataPreparator:
                 x_new = x - x1
                 y_new = y - y1
 
-                # Validate keypoint is within crop bounds
-                if x_new < 0 or y_new < 0 or x_new > crop_width or y_new > crop_height:
-                    logger.warning(
-                        f"Keypoint ({x:.1f}, {y:.1f}) outside crop bounds "
-                        f"for {image_path.name}"
+                # Strict boundary validation: keypoints MUST be within crop bounds
+                if (
+                    x_new < -TOLERANCE
+                    or y_new < -TOLERANCE
+                    or x_new > crop_width + TOLERANCE
+                    or y_new > crop_height + TOLERANCE
+                ):
+                    logger.error(
+                        f"Keypoint ({x:.1f}, {y:.1f}) -> ({x_new:.1f}, {y_new:.1f}) "
+                        f"outside crop bounds [{crop_width:.1f}x{crop_height:.1f}] "
+                        f"for {image_path.name}. This indicates annotation error or "
+                        f"insufficient padding. Skipping image to preserve topology integrity."
                     )
-                    # Clamp to bounds
-                    x_new = max(0, min(crop_width, x_new))
-                    y_new = max(0, min(crop_height, y_new))
+                    return None, None
 
                 transformed_points.append((x_new, y_new, visibility))
 
@@ -364,6 +370,33 @@ class Module3DataPreparator:
                 x_coord = polygon[i]
                 y_coord = polygon[i + 1]
                 keypoints.append((x_coord, y_coord, YOLO_VISIBLE))
+
+            # Validate keypoint count (must be exactly 4 for Container ID)
+            if len(keypoints) != 4:
+                logger.error(
+                    f"Invalid keypoint count {len(keypoints)} for "
+                    f"{image_info['file_name']}, expected exactly 4 (TL, TR, BR, BL). "
+                    f"Skipping to preserve topology integrity."
+                )
+                skipped_count += 1
+                self.stats[split_name]["invalid_keypoint_count"] = (
+                    self.stats[split_name].get("invalid_keypoint_count", 0) + 1
+                )
+                continue
+
+            # Validate visibility flags (must all be labeled, not 0)
+            unlabeled_count = sum(1 for _, _, v in keypoints if v == 0)
+            if unlabeled_count > 0:
+                logger.error(
+                    f"Found {unlabeled_count} unlabeled keypoints (visibility=0) "
+                    f"in {image_info['file_name']}. All 4 keypoints must be labeled. "
+                    f"Skipping to ensure annotation quality."
+                )
+                skipped_count += 1
+                self.stats[split_name]["unlabeled_keypoints"] = (
+                    self.stats[split_name].get("unlabeled_keypoints", 0) + 1
+                )
+                continue
 
             # Crop and transform
             cropped_img, yolo_keypoints = self.crop_and_transform(

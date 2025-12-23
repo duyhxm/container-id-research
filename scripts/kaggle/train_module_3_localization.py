@@ -40,13 +40,37 @@ CONFIG = {
 
 
 def log(step, message, level="INFO"):
-    """Unified logging"""
+    """Unified logging with step tracking and visual symbols.
+
+    Args:
+        step: Training step identifier (e.g., "1/10", "ERROR")
+        message: Log message to display
+        level: Severity level. One of "INFO", "WARN", "ERROR", "STEP"
+
+    Example:
+        >>> log("1/10", "Starting training", "STEP")
+        📌 [1/10] Starting training
+    """
     symbols = {"INFO": "✓", "WARN": "⚠️", "ERROR": "❌", "STEP": "📌"}
     print(f"{symbols.get(level, '•')} [{step}] {message}")
 
 
 def run_command(cmd, error_msg=None, shell=True):
-    """Execute shell command with error handling"""
+    """Execute shell command with error handling and optional exit on failure.
+
+    Args:
+        cmd: Shell command to execute (string or list)
+        error_msg: Error message to display on failure. If None, no error logged.
+                   If provided, exits with code 1 on command failure.
+        shell: Whether to execute via shell (default True)
+
+    Returns:
+        bool: True if command succeeded (returncode 0), False otherwise
+
+    Example:
+        >>> run_command("git clone repo.git", "Clone failed")
+        True
+    """
     result = subprocess.run(cmd, shell=shell, capture_output=False)
     if result.returncode != 0 and error_msg:
         log("ERROR", error_msg, "ERROR")
@@ -60,7 +84,17 @@ def run_command(cmd, error_msg=None, shell=True):
 
 
 def verify_gpu():
-    """Verify GPU availability"""
+    """Verify GPU availability and display device information.
+
+    Checks if CUDA is available via PyTorch and logs the GPU device name.
+    Exits with code 1 if GPU is not available or PyTorch is not installed.
+
+    Raises:
+        SystemExit: If GPU not available or PyTorch import fails
+
+    Note:
+        Requires PyTorch to be installed in the environment
+    """
     log("0/10", "Verifying GPU", "STEP")
     try:
         import torch
@@ -75,7 +109,20 @@ def verify_gpu():
 
 
 def clone_repository():
-    """Clone repository from GitHub"""
+    """Clone GitHub repository to Kaggle workspace.
+
+    Clones the repository specified in CONFIG['repo_url'] to CONFIG['repo_path'].
+    Skips cloning if repository directory already exists. Changes working
+    directory to the cloned repository after successful clone.
+
+    Uses:
+        - CONFIG['repo_url']: HTTPS GitHub repository URL
+        - CONFIG['repo_branch']: Branch name to clone (e.g., 'main')
+        - CONFIG['repo_path']: Target path for clone operation
+
+    Raises:
+        SystemExit: If git clone command fails
+    """
     log("1/10", "Cloning repository", "STEP")
     repo_path = CONFIG["repo_path"]
 
@@ -211,7 +258,24 @@ def install_dependencies():
 
 
 def load_secrets():
-    """Load secrets from Kaggle dataset input JSON file"""
+    """Load secrets from Kaggle dataset input JSON file.
+
+    Searches for JSON file in CONFIG['secrets_path'] containing required
+    credentials for DVC (Google Drive), WandB, and GitHub.
+
+    Returns:
+        dict: Secrets dictionary with keys:
+            - GDRIVE_USER_CREDENTIALS: Google Drive credentials (dict)
+            - WANDB_API_KEY: WandB API key (str)
+            - GITHUB_TOKEN: GitHub personal access token (str, optional)
+
+    Raises:
+        SystemExit: If JSON file not found, invalid JSON, or missing required keys
+
+    Example:
+        >>> secrets = load_secrets()
+        >>> wandb_key = secrets['WANDB_API_KEY']
+    """
     log("0.5/10", "Loading secrets from dataset", "STEP")
 
     secrets_path = CONFIG["secrets_path"]
@@ -249,7 +313,26 @@ def load_secrets():
 
 
 def configure_dvc(secrets):
-    """Configure DVC with session token authentication"""
+    """Configure DVC with Google Drive credentials and verify remote access.
+
+    Sets up DVC remote storage authentication using user-level credentials
+    (not service account). Writes credentials to GDrive-specific location.
+
+    Args:
+        secrets: Dictionary containing 'GDRIVE_USER_CREDENTIALS' key with
+                 Google Drive OAuth2 credentials (refresh token, client ID, etc.)
+
+    Steps:
+        1. Extract and write credentials to ~/.gdrive/credentials
+        2. Configure DVC remote with gdrive_user_credentials_file
+        3. Validate remote access with 'dvc remote list'
+
+    Raises:
+        SystemExit: If credentials are missing, write fails, or remote config fails
+
+    Note:
+        Uses user credentials (not service account) for read-only access
+    """
     log("3/10", "Configuring DVC", "STEP")
 
     try:
@@ -283,12 +366,14 @@ def configure_dvc(secrets):
     os.chmod(credentials_path, 0o600)
 
     # Configure DVC remote
-    subprocess.run(
+    # Set credentials file path (MUST succeed)
+    run_command(
         f'dvc remote modify storage gdrive_user_credentials_file "{credentials_path}"',
-        shell=True,
-        capture_output=True,
-        check=False,
+        "Failed to configure DVC credentials file path",
     )
+
+    # Unset service account configs (may not exist, so we use subprocess directly)
+    # These are safe to fail if configs don't exist
     subprocess.run(
         "dvc remote modify storage --unset gdrive_use_service_account",
         shell=True,
@@ -302,11 +387,45 @@ def configure_dvc(secrets):
         check=False,
     )
 
+    # Validate configuration was applied successfully
+    result = subprocess.run(
+        "dvc remote list",
+        shell=True,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0 or "storage" not in result.stdout:
+        log("3/10", "DVC remote not configured correctly", "ERROR")
+        sys.exit(1)
+
     log("3/10", "DVC configured with session token")
 
 
 def configure_git(secrets):
-    """Configure Git for GitHub push"""
+    """Configure Git credential helper with GitHub token for secure auth.
+
+    Sets up Git authentication using credential helper pattern to avoid
+    embedding tokens in remote URLs. Token is stored in environment variable
+    and injected dynamically by credential helper.
+
+    Args:
+        secrets: Dictionary containing optional 'GITHUB_TOKEN' key
+
+    Steps:
+        1. Store token in GITHUB_TOKEN environment variable
+        2. Configure Git credential helper to use environment variable
+        3. Set Git user identity (kaggle-bot)
+        4. Update remote URL to HTTPS (without embedded token)
+
+    Security:
+        - Token never appears in git config or remote URLs
+        - Token only accessible via environment variable
+        - Credential helper injects token at runtime
+
+    Note:
+        Git commands after this can push/pull without password prompts
+    """
     log("4/10", "Configuring Git", "STEP")
 
     try:
@@ -318,12 +437,25 @@ def configure_git(secrets):
         os.environ["SKIP_GIT_PUSH"] = "1"
         return
 
+    # Store token in environment variable (NOT in URL)
+    os.environ["GIT_TOKEN"] = github_token
+
+    # Configure credential helper to inject token from environment
+    # This prevents token exposure in command strings or subprocess outputs
+    credential_helper = (
+        "!f() { "
+        'echo "username=x-access-token"; '
+        'echo "password=${GIT_TOKEN}"; '
+        "}; f"
+    )
     subprocess.run(
-        "git config --global credential.helper store",
+        f'git config --global credential.helper "{credential_helper}"',
         shell=True,
         capture_output=True,
         check=False,
     )
+
+    # Configure Git user identity
     subprocess.run(
         'git config --global user.email "kaggle-bot@kaggle.com"',
         shell=True,
@@ -337,7 +469,10 @@ def configure_git(secrets):
         check=False,
     )
 
-    repo_url = f"https://{github_token}@github.com/{CONFIG['github_username']}/container-id-research.git"
+    # Set remote URL WITHOUT token (credential helper will inject it)
+    repo_url = (
+        f"https://github.com/{CONFIG['github_username']}/container-id-research.git"
+    )
     subprocess.run(
         f"git remote set-url origin {repo_url}",
         shell=True,
@@ -345,11 +480,23 @@ def configure_git(secrets):
         check=False,
     )
 
-    log("4/10", "Git configured")
+    log("4/10", "Git configured (token stored securely)")
 
 
 def configure_wandb(secrets):
-    """Configure WandB"""
+    """Configure WandB authentication for experiment tracking.
+
+    Args:
+        secrets: Dictionary containing 'WANDB_API_KEY' key
+
+    Behavior:
+        - If API key present: Authenticates via 'wandb login'
+        - If API key missing: Logs warning and continues (offline mode)
+
+    Note:
+        WandB is optional. Training can proceed without it, but metrics
+        won't be logged to WandB cloud.
+    """
     log("5/10", "Configuring WandB", "STEP")
 
     try:
@@ -369,7 +516,24 @@ def configure_wandb(secrets):
 
 
 def fetch_dataset():
-    """Fetch dataset from DVC"""
+    """Fetch dataset from DVC remote storage.
+
+    Pulls processed localization dataset from Google Drive via DVC.
+    Uses two-stage pull strategy:
+        1. Pull base dependencies (annotations) to satisfy pipeline requirements
+        2. Pull processed dataset directly (already prepared and pushed)
+
+    Checks:
+        - Verifies dvc.lock exists
+        - Skips data/raw.dvc (large images) to save time/bandwidth
+        - Only pulls if training images not already present
+
+    Raises:
+        SystemExit: If DVC pull fails or dvc.lock not found
+
+    Note:
+        Dataset must be pre-processed locally and pushed to DVC before training
+    """
     log("6/10", "Fetching dataset", "STEP")
 
     dataset_path = CONFIG["dataset_path"]
@@ -401,7 +565,18 @@ def fetch_dataset():
 
 
 def display_config():
-    """Display training configuration"""
+    """Display training configuration summary from experiment YAML.
+
+    Reads experiments/001_loc_baseline.yaml and prints key training parameters:
+        - Model architecture (e.g., yolo11s-pose.pt)
+        - Number of training epochs
+        - Batch size
+        - Optimizer type
+        - Keypoint configuration (kpt_shape)
+
+    Note:
+        For informational purposes only, does not validate configuration
+    """
     log("7/10", "Training Configuration", "STEP")
 
     import yaml
@@ -418,7 +593,22 @@ def display_config():
 
 
 def download_pretrained_weights():
-    """Download pretrained YOLOv11s-Pose weights"""
+    """Download and cache pretrained YOLOv11s-Pose weights.
+
+    Downloads COCO-pretrained weights from Ultralytics hub to local cache.
+    This avoids downloading during training initialization, which can cause
+    network interruptions or timeouts.
+
+    Weights:
+        - yolo11s-pose.pt: Small variant with 4-point keypoint detection
+        - Pre-trained on COCO-Pose dataset
+
+    Cache Location:
+        - ~/.cache/ultralytics/ (Ultralytics default)
+
+    Note:
+        Creates temporary YOLO object to trigger download, then discards it
+    """
     log("8/10", "Downloading pretrained weights", "STEP")
 
     from ultralytics import YOLO
@@ -430,7 +620,27 @@ def download_pretrained_weights():
 
 
 def train_model():
-    """Execute training via standalone script (NOT DVC pipeline)"""
+    """Execute training via standalone script (NOT DVC pipeline).
+
+    Runs the localization training script directly as a subprocess.
+    Training is tracked by WandB but NOT executed via DVC pipeline.
+
+    Architecture:
+        - Data Pipeline: DVC (split_data → convert_localization)
+        - Training: Standalone script (tracked by WandB)
+        - Model Versioning: Manual DVC add after training
+
+    Training Mode:
+        Controlled by experiments/001_loc_baseline.yaml:
+            - resume_from: null → Fresh training with pretrained YOLO
+            - resume_from: path → Resume from checkpoint
+
+    Returns:
+        bool: True if training succeeded, False otherwise
+
+    Estimated Time:
+        2-3 hours on Kaggle T4 x2 GPU
+    """
     log("9/10", "Starting training", "STEP")
     print("=" * 70)
     print("⏱️  Training: ~2-3 hours")
@@ -771,7 +981,37 @@ def sync_outputs():
 
 
 def main():
-    """Execute training pipeline"""
+    """Execute training pipeline with full orchestration.
+
+    Orchestrates the complete training pipeline from environment setup
+    to model versioning. Includes error handling and graceful shutdown.
+
+    Pipeline Steps:
+        1. Load secrets from Kaggle dataset input
+        2. Verify GPU availability
+        3. Clone GitHub repository
+        4. Install dependencies (Hybrid Environment Strategy)
+        5. Configure DVC (Google Drive credentials)
+        6. Configure Git (credential helper for secure push)
+        7. Configure WandB (experiment tracking)
+        8. Fetch dataset from DVC
+        9. Display training configuration
+        10. Download pretrained YOLO weights
+        11. Execute training
+        12. Sync outputs to DVC + GitHub (atomic transaction)
+
+    Error Handling:
+        - KeyboardInterrupt: Logs warning and exits gracefully
+        - Exception: Logs full traceback and exits with code 1
+
+    Success Criteria:
+        - Training completes without errors
+        - Models synced to DVC remote storage
+        - .dvc files pushed to GitHub
+
+    Raises:
+        SystemExit: On any step failure or user interruption
+    """
     print("=" * 70)
     print(" CONTAINER ID LOCALIZATION TRAINING - YOLOv11s-Pose")
     print("=" * 70)

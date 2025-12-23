@@ -9,15 +9,69 @@ Trains YOLOv11-Pose model for 4-point keypoint detection with:
 - Pose-specific metrics (OKS, mAP)
 """
 
+# Standard library imports
 import argparse
 import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+# Third-party imports
 import yaml
 
+# Local imports
 from src.utils.logging_config import setup_logging
+
+# Required configuration keys for validation
+REQUIRED_CONFIG_KEYS = [
+    "model.architecture",
+    "training.epochs",
+    "training.batch_size",
+    "training.optimizer",
+    "training.learning_rate",
+    "keypoints.kpt_shape",
+]
+
+
+def _validate_config(config: Dict[str, Any]) -> None:
+    """
+    Validate configuration structure and types.
+
+    Args:
+        config: Configuration dictionary to validate
+
+    Raises:
+        ValueError: If required keys are missing or values are invalid
+        TypeError: If values have incorrect types
+    """
+    # Check required keys exist
+    for key_path in REQUIRED_CONFIG_KEYS:
+        keys = key_path.split(".")
+        value = config
+        for key in keys:
+            if key not in value:
+                raise ValueError(f"Missing required config key: {key_path}")
+            value = value[key]
+
+    # Type validation
+    if not isinstance(config["training"]["epochs"], int):
+        raise TypeError("training.epochs must be integer")
+
+    if not isinstance(config["training"]["batch_size"], int):
+        raise TypeError("training.batch_size must be integer")
+
+    if config["training"]["batch_size"] < 1:
+        raise ValueError("training.batch_size must be >= 1")
+
+    if not isinstance(config["keypoints"]["kpt_shape"], list):
+        raise TypeError("keypoints.kpt_shape must be list")
+
+    if len(config["keypoints"]["kpt_shape"]) != 2:
+        raise ValueError("keypoints.kpt_shape must be [num_keypoints, num_coords]")
+
+    # Validate optimizer is a string
+    if not isinstance(config["training"]["optimizer"], str):
+        raise TypeError("training.optimizer must be string")
 
 
 def load_config(config_path: Path) -> Dict[str, Any]:
@@ -32,7 +86,8 @@ def load_config(config_path: Path) -> Dict[str, Any]:
 
     Raises:
         FileNotFoundError: If config file doesn't exist
-        ValueError: If localization section missing
+        ValueError: If localization section missing or validation fails
+        TypeError: If configuration values have incorrect types
     """
     if not config_path.exists():
         raise FileNotFoundError(f"Configuration file not found: {config_path}")
@@ -43,7 +98,12 @@ def load_config(config_path: Path) -> Dict[str, Any]:
     if "localization" not in params:
         raise ValueError("Configuration must contain 'localization' section")
 
-    return params["localization"]
+    config = params["localization"]
+
+    # Validate configuration structure and types
+    _validate_config(config)
+
+    return config
 
 
 def initialize_wandb(config: Dict[str, Any], experiment_name: Optional[str]) -> None:
@@ -63,8 +123,8 @@ def initialize_wandb(config: Dict[str, Any], experiment_name: Optional[str]) -> 
     # Check if WandB run is already active (e.g., from parent process)
     if wandb.run is not None:
         logging.info(f"WandB run already active: {wandb.run.name}")
-        logging.info(f"Reusing existing run: {wandb.run.url}")
-        return  # Don't re-initialize, use existing run
+        logging.info(f"Finishing existing run before re-initialization")
+        wandb.finish()  # Properly close existing run before creating new one
 
     wandb_config = config.get("wandb", {})
 
@@ -171,21 +231,39 @@ def prepare_training_args(
         else:
             # Multiple GPUs available
             if multi_gpu_enabled:
-                # Use all available GPUs
-                device = list(range(gpu_count))
-                logging.info("=" * 70)
-                logging.info("🚀 GPU Configuration: MULTI-GPU MODE")
-                logging.info("=" * 70)
-                logging.info(f"GPUs Detected: {gpu_count}")
+                # Validate GPU availability and build device list dynamically
+                available_gpus = []
                 for i in range(gpu_count):
-                    logging.info(f"  GPU {i}: {torch.cuda.get_device_name(i)}")
-                    logging.info(
-                        f"    VRAM: {torch.cuda.get_device_properties(i).total_memory / 1024**3:.2f} GB"
-                    )
-                logging.info(f"Status: Training will use GPUs {device}")
-                logging.info("Note: Distributed Data Parallel (DDP) will be used")
-                logging.info("=" * 70)
-                logging.info("")
+                    try:
+                        # Verify GPU is accessible
+                        torch.cuda.get_device_properties(i)
+                        available_gpus.append(i)
+                    except RuntimeError as e:
+                        logging.warning(f"GPU {i} not accessible: {e}")
+
+                if not available_gpus:
+                    logging.warning("No GPUs accessible, falling back to GPU 0")
+                    device = 0
+                elif len(available_gpus) == 1:
+                    logging.info("Only 1 GPU accessible, using single-GPU mode")
+                    device = available_gpus[0]
+                else:
+                    # Use all available GPUs dynamically
+                    device = available_gpus
+                    logging.info("=" * 70)
+                    logging.info("🚀 GPU Configuration: MULTI-GPU MODE")
+                    logging.info("=" * 70)
+                    logging.info(f"GPUs Detected: {gpu_count}")
+                    logging.info(f"GPUs Accessible: {len(available_gpus)}")
+                    for i in available_gpus:
+                        logging.info(f"  GPU {i}: {torch.cuda.get_device_name(i)}")
+                        logging.info(
+                            f"    VRAM: {torch.cuda.get_device_properties(i).total_memory / 1024**3:.2f} GB"
+                        )
+                    logging.info(f"Status: Training will use GPUs {device}")
+                    logging.info("Note: Distributed Data Parallel (DDP) will be used")
+                    logging.info("=" * 70)
+                    logging.info("")
             else:
                 # Multi-GPU available but not enabled in config
                 device = 0
@@ -274,7 +352,7 @@ def prepare_training_args(
 def train_localization_model(
     config_path: Path,
     experiment_name: Optional[str] = None,
-    data_yaml: str = "data/processed/localization/data.yaml",
+    data_yaml: Path = Path("data/processed/localization/data.yaml"),
 ) -> Dict[str, Any]:
     """
     Train YOLOv11-Pose localization model.
@@ -295,10 +373,8 @@ def train_localization_model(
     setup_logging()
     logger = logging.getLogger(__name__)
 
-    # Convert data_yaml to absolute path early for use throughout the function
-    from pathlib import Path as DataPath
-
-    data_yaml_abs = str(DataPath(data_yaml).absolute())
+    # Convert data_yaml to absolute path early (resolve() handles relative paths)
+    data_yaml_abs = str(data_yaml.resolve())
 
     logger.info("=" * 60)
     logger.info("Container ID Localization Training (Module 3)")
@@ -539,6 +615,16 @@ def train_localization_model(
         json.dump(final_metrics, f, indent=2)
     logger.info(f"Metrics saved to {metrics_path}")
 
+    # Properly finish WandB run
+    try:
+        import wandb
+
+        if wandb.run is not None:
+            wandb.finish()
+            logger.info("WandB run finished successfully")
+    except ImportError:
+        pass
+
     logger.info("=" * 60)
     logger.info("Training Complete!")
     logger.info("=" * 60)
@@ -586,10 +672,31 @@ def main():
         train_localization_model(
             config_path=Path(args.config),
             experiment_name=args.experiment,
-            data_yaml=args.data,
+            data_yaml=Path(args.data),
         )
+    except KeyboardInterrupt:
+        logging.warning("Training interrupted by user")
+        # Cleanup WandB run on interruption
+        try:
+            import wandb
+
+            if wandb.run is not None:
+                wandb.finish(exit_code=1)
+                logging.info("WandB run marked as interrupted")
+        except ImportError:
+            pass
+        raise
     except Exception as e:
         logging.error(f"Training failed: {e}")
+        # Cleanup WandB run on failure
+        try:
+            import wandb
+
+            if wandb.run is not None:
+                wandb.finish(exit_code=1)
+                logging.info("WandB run marked as failed")
+        except ImportError:
+            pass
         raise
 
 

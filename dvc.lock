@@ -51,8 +51,8 @@ stages:
     outs:
     - path: data/interim/augmented_images
       hash: md5
-      md5: 9eecfb65c4c6ed769f5d1e892ea79a3b.dir
-      size: 710664
+      md5: 9670da41beb36c9be6e7e68460be6c85.dir
+      size: 853410
       nfiles: 2
     - path: data/interim/test_master.json
       hash: md5
@@ -60,8 +60,8 @@ stages:
       size: 111222
     - path: data/interim/train_master.json
       hash: md5
-      md5: 9dc3da510e3bb7c38dec88e83b4d8de1
-      size: 501508
+      md5: 8f3693b8f6dadd62ec2652ee465c2ff7
+      size: 501485
     - path: data/interim/val_master.json
       hash: md5
       md5: 2229a1f562f7a437fab112ed3151a5c2
@@ -108,8 +108,8 @@ stages:
       size: 111222
     - path: data/interim/train_master.json
       hash: md5
-      md5: 9dc3da510e3bb7c38dec88e83b4d8de1
-      size: 501508
+      md5: 8f3693b8f6dadd62ec2652ee465c2ff7
+      size: 501485
     - path: data/interim/val_master.json
       hash: md5
       md5: 2229a1f562f7a437fab112ed3151a5c2
@@ -121,8 +121,8 @@ stages:
       nfiles: 831
     - path: scripts/data_processing/prepare_module_3_data.py
       hash: md5
-      md5: c1ef885679b313f56958593657c3c26e
-      size: 19326
+      md5: a6592aa3b1be4f2bbe6ba84e8f627e71
+      size: 20964
     params:
       data/data_config.yaml:
         localization.cont_door_category_id: 1
@@ -135,6 +135,6 @@ stages:
     outs:
     - path: data/processed/localization
       hash: md5
-      md5: 02dc548dacb6dd8df663546204384304.dir
-      size: 95711963
+      md5: 64ebb01df34af6ce30eb820624e7ed91.dir
+      size: 95699038
       nfiles: 979
