@@ -90,17 +90,124 @@ def clone_repository():
 
 
 def install_dependencies():
-    """Install dependencies using uv"""
-    log("2/10", "Installing dependencies with uv", "STEP")
+    """
+    Install dependencies using Hybrid Environment Strategy
 
-    # Install uv
+    Strategy:
+    - Hardware Stack (PyTorch/CUDA): Use Kaggle's pre-installed versions
+    - Logic Stack (Other deps): Sync from uv.lock
+
+    This prevents PyTorch/CUDA version conflicts while ensuring reproducibility
+    of all other dependencies.
+    """
+    log("2/10", "Installing dependencies (Hybrid Strategy)", "STEP")
+
+    # ========================================================================
+    # STEP 1: Install uv and verify uv.lock exists
+    # ========================================================================
+    log("2/10", "Step 1/5: Installing uv...")
     run_command("pip install -q uv", "Failed to install uv")
 
-    # Sync dependencies
-    # --system allows installing into the system python environment (Kaggle kernel)
-    run_command("uv pip install --system .", "Failed to sync dependencies")
+    if not Path("uv.lock").exists():
+        log("2/10", "uv.lock not found in repository", "ERROR")
+        sys.exit(1)
+    log("2/10", "  ✅ uv.lock verified")
 
-    log("2/10", "Dependencies installed via uv")
+    # ========================================================================
+    # STEP 2: Export & Filter (The Logic Stack)
+    # ========================================================================
+    log("2/10", "Step 2/5: Exporting and filtering requirements...")
+
+    # Export from uv.lock (frozen snapshot, no hashes, no project itself)
+    export_cmd = (
+        "python -m uv export --frozen --format=requirements-txt "
+        "--no-hashes --no-emit-project"
+    )
+    result = subprocess.run(export_cmd, shell=True, capture_output=True, text=True)
+    if result.returncode != 0:
+        log("2/10", f"Failed to export from uv.lock: {result.stderr}", "ERROR")
+        sys.exit(1)
+
+    # Filter out Hardware Stack packages using Python string manipulation
+    # Exclude: PyTorch, TorchVision, TorchAudio, NVIDIA/CUDA libraries
+    exclude_keywords = ["torch", "torchvision", "torchaudio", "nvidia-", "cuda-"]
+    filtered_lines = []
+
+    for line in result.stdout.splitlines():
+        line = line.strip()
+        # Skip empty lines and comments
+        if not line or line.startswith("#"):
+            continue
+        # Check if any excluded keyword is in the line (case-insensitive)
+        if not any(keyword in line.lower() for keyword in exclude_keywords):
+            filtered_lines.append(line)
+
+    # Save filtered requirements to temporary file
+    temp_req_file = Path("/tmp/filtered_requirements.txt")
+    temp_req_file.write_text("\n".join(filtered_lines))
+
+    log("2/10", f"  ✅ Filtered {len(filtered_lines)} packages (excluded PyTorch/CUDA)")
+
+    # ========================================================================
+    # STEP 3: Install to System (The Hybrid Step)
+    # ========================================================================
+    log("2/10", "Step 3/5: Installing Logic Stack to system Python...")
+
+    # Install filtered requirements to system Python
+    install_cmd = f"python -m uv pip install --system -r {temp_req_file}"
+    result = subprocess.run(install_cmd, shell=True, capture_output=True, text=True)
+    if result.returncode != 0:
+        log(
+            "2/10", f"Failed to install filtered requirements: {result.stderr}", "ERROR"
+        )
+        sys.exit(1)
+
+    # Install project in editable mode WITHOUT dependencies (already installed above)
+    # --no-deps prevents re-installing dependencies (especially PyTorch)
+    install_project_cmd = "python -m uv pip install --system --no-deps -e ."
+    result = subprocess.run(
+        install_project_cmd, shell=True, capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        log("2/10", f"Failed to install project: {result.stderr}", "ERROR")
+        sys.exit(1)
+
+    log("2/10", "  ✅ Logic Stack installed")
+
+    # ========================================================================
+    # STEP 4: Validation
+    # ========================================================================
+    log("2/10", "Step 4/5: Validating installation...")
+
+    # Check for version conflicts (especially Numpy with PyTorch)
+    check_cmd = "python -m uv pip check"
+    result = subprocess.run(check_cmd, shell=True, capture_output=True, text=True)
+    if result.returncode != 0:
+        log("2/10", f"Dependency conflicts detected:\n{result.stdout}", "WARN")
+    else:
+        log("2/10", "  ✅ No conflicts detected")
+
+    # Verify PyTorch and CUDA availability
+    verify_cmd = (
+        'python -c "import torch; '
+        "print(f'PyTorch: {torch.__version__}'); "
+        "print(f'CUDA Available: {torch.cuda.is_available()}'); "
+        'print(f\'CUDA Version: {torch.version.cuda if torch.cuda.is_available() else "N/A"}\')"'
+    )
+    result = subprocess.run(verify_cmd, shell=True, capture_output=True, text=True)
+    if result.returncode != 0:
+        log("2/10", "Failed to verify PyTorch/CUDA", "ERROR")
+        sys.exit(1)
+
+    for line in result.stdout.strip().splitlines():
+        log("2/10", f"  ✅ {line}")
+
+    # ========================================================================
+    # STEP 5: Complete
+    # ========================================================================
+    log("2/10", "Step 5/5: Hybrid installation complete")
+    log("2/10", "  📦 Hardware Stack: Kaggle's PyTorch + CUDA (preserved)")
+    log("2/10", "  📦 Logic Stack: uv.lock dependencies (synced)")
 
 
 def load_secrets():
