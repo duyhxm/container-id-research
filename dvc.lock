@@ -121,8 +121,8 @@ stages:
       nfiles: 831
     - path: scripts/data_processing/prepare_module_3_data.py
       hash: md5
-      md5: 6fc1ebb989c24cf4ba1e6c8351cb7fee
-      size: 18412
+      md5: c1ef885679b313f56958593657c3c26e
+      size: 19326
     params:
       data/data_config.yaml:
         localization.cont_door_category_id: 1
@@ -131,9 +131,10 @@ stages:
         localization.cont_id_category_name: container_id
         localization.min_crop_size: 32
         localization.num_keypoints: 4
+        localization.padding_ratio: 0.1
     outs:
     - path: data/processed/localization
       hash: md5
-      md5: 0ca25ca251b5d9c8db1f7b04dbcda4eb.dir
-      size: 84663770
+      md5: 02dc548dacb6dd8df663546204384304.dir
+      size: 95711963
       nfiles: 979

@@ -59,6 +59,7 @@ class Module3DataPreparator:
         self.id_category_id = loc_config.get("cont_id_category_id", 2)
         self.num_keypoints = loc_config.get("num_keypoints", 4)
         self.min_crop_size = loc_config.get("min_crop_size", MIN_CROP_SIZE)
+        self.padding_ratio = loc_config.get("padding_ratio", 0.1)
 
         # Statistics tracking
         self.stats = defaultdict(lambda: defaultdict(int))
@@ -90,18 +91,36 @@ class Module3DataPreparator:
             # Extract bbox coordinates
             x1, y1, x2, y2 = door_bbox
 
-            # Clip bbox to image boundaries (handle annotation errors)
-            original_bbox = door_bbox.copy()
-            x1 = max(0, x1)
-            y1 = max(0, y1)
-            x2 = min(orig_width, x2)
-            y2 = min(orig_height, y2)
+            # Calculate bbox dimensions for padding
+            bbox_width = x2 - x1
+            bbox_height = y2 - y1
 
-            # Log if bbox was clipped
-            if original_bbox != [x1, y1, x2, y2]:
+            # Apply padding (expand crop region for robustness)
+            padding_w = bbox_width * self.padding_ratio
+            padding_h = bbox_height * self.padding_ratio
+
+            x1_padded = x1 - padding_w
+            y1_padded = y1 - padding_h
+            x2_padded = x2 + padding_w
+            y2_padded = y2 + padding_h
+
+            # Clip bbox to image boundaries (handle annotation errors & padding overflow)
+            original_bbox = [x1_padded, y1_padded, x2_padded, y2_padded]
+            x1 = max(0, x1_padded)
+            y1 = max(0, y1_padded)
+            x2 = min(orig_width, x2_padded)
+            y2 = min(orig_height, y2_padded)
+
+            # Log if bbox was clipped (due to padding or annotation errors)
+            if (
+                abs(original_bbox[0] - x1) > 0.1
+                or abs(original_bbox[1] - y1) > 0.1
+                or abs(original_bbox[2] - x2) > 0.1
+                or abs(original_bbox[3] - y2) > 0.1
+            ):
                 logger.debug(
-                    f"Clipped bbox {original_bbox} → [{x1:.1f}, {y1:.1f}, {x2:.1f}, {y2:.1f}] "
-                    f"for {image_path.name}"
+                    f"Clipped padded bbox {[f'{v:.1f}' for v in original_bbox]} → "
+                    f"[{x1:.1f}, {y1:.1f}, {x2:.1f}, {y2:.1f}] for {image_path.name}"
                 )
 
             # Validate bbox is still valid after clipping
@@ -434,6 +453,7 @@ class Module3DataPreparator:
         logger.info(f"ID Category ID: {self.id_category_id}")
         logger.info(f"Num Keypoints: {self.num_keypoints}")
         logger.info(f"Min Crop Size: {self.min_crop_size}px")
+        logger.info(f"Padding Ratio: {self.padding_ratio:.1%}")
         logger.info(f"Filter Training: {FILTER_VALUES}")
         logger.info("=" * 70)
 

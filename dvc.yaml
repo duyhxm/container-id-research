@@ -59,6 +59,7 @@ stages:
       - localization.cont_door_category_id
       - localization.cont_door_category_name
       - localization.min_crop_size
+      - localization.padding_ratio
     outs:
     - data/processed/localization
 

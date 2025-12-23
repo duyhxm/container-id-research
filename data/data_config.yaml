@@ -106,6 +106,7 @@ localization:
   
   # Image preprocessing
   min_crop_size: 32    # Minimum crop size in pixels (validation threshold)
+  padding_ratio: 0.1   # Padding around door bbox (10% of width/height) for robustness
   img_size: 640
 
 # ============================================================================

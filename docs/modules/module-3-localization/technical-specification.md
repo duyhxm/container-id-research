@@ -30,7 +30,7 @@ Vùng `container_id` được định nghĩa bởi 4 điểm keypoints theo th�
 ### 4.2. Dataset Structure (YOLO Format)
 Cấu trúc thư mục chuẩn bị cho training:
 ```text
-dataset/
+localization/
 ├── images/
 │   ├── train/
 │   ├── val/
@@ -59,7 +59,8 @@ dataset/
         3. Normalize toạ độ theo kích thước ảnh.
 
 ### 5.2. Training Pipeline (Kaggle Compatible)
-- Code phải tách biệt logic định nghĩa model và logic chạy trên Kaggle.
+
+- Code phải tách biệt logic định nghĩa model và logic chạy trên Kaggle. Kernel trên Kaggle sẽ sử dụng GPU T4x2
 - Sử dụng `ultralytics` library.
 - Hyperparameters cơ bản:
     - `imgsz`: 640
@@ -79,7 +80,7 @@ Module 3 không hoạt động độc lập mà là một mắt xích trong pipe
 
 - **Processing Logic:**
   1. Nhận `cropped_image`.
-  2. Feed vào model YOLOv11-Pose (model tự động resize/letterbox).
+  2. Feed vào model YOLOv11s-Pose (model tự động resize/letterbox).
   3. Nhận về toạ độ 4 keypoints $(x, y)$ tương ứng trên hệ toạ độ của `cropped_image`.
 
 - **Output Interface:**
