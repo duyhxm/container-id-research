@@ -8,7 +8,7 @@ This directory contains module-specific data preprocessing scripts for the Conta
 **Purpose**: Prepare dataset for Module 3 (Container ID Localization) by cropping images and transforming keypoints.
 
 **Key Operations**:
-1. Loads BOTH `container_door` (category_id=1) and `container_id` (category_id=2) annotations
+1. Loads BOTH `container_door` (cont_door_category_id=1) and `container_id` (cont_id_category_id=2) annotations
 2. Crops images to door bounding box
 3. Transforms keypoints from original coordinate system to cropped coordinate system
 4. Normalizes keypoints using crop dimensions (not original image size)
@@ -37,8 +37,8 @@ python scripts/data_processing/prepare_module_3_data.py \
 **Configuration Requirements** (`data/data_config.yaml`):
 ```yaml
 localization:
-  door_category_id: 1         # Category ID for container_door
-  category_id: 2              # Category ID for container_id
+  cont_door_category_id: 1    # Category ID for container_door
+  cont_id_category_id: 2      # Category ID for container_id
   num_keypoints: 4            # Number of keypoints (4-point polygon)
   min_crop_size: 32           # Minimum crop size validation threshold
 ```

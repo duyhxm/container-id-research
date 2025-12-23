@@ -53,10 +53,11 @@ stages:
     - scripts/data_processing/prepare_module_3_data.py
     params:
     - data/data_config.yaml:
-      - localization.category_id
-      - localization.category_name
+      - localization.cont_id_category_id
+      - localization.cont_id_category_name
       - localization.num_keypoints
-      - localization.door_category_id
+      - localization.cont_door_category_id
+      - localization.cont_door_category_name
       - localization.min_crop_size
     outs:
     - data/processed/localization

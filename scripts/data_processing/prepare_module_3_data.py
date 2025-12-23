@@ -55,8 +55,8 @@ class Module3DataPreparator:
 
         # Extract configuration parameters
         loc_config = config.get("localization", {})
-        self.door_category_id = loc_config.get("door_category_id", 1)
-        self.id_category_id = loc_config.get("category_id", 2)
+        self.door_category_id = loc_config.get("cont_door_category_id", 1)
+        self.id_category_id = loc_config.get("cont_id_category_id", 2)
         self.num_keypoints = loc_config.get("num_keypoints", 4)
         self.min_crop_size = loc_config.get("min_crop_size", MIN_CROP_SIZE)
 

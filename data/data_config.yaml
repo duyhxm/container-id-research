@@ -86,9 +86,12 @@ detection:
 # MODULE 3: CONTAINER ID LOCALIZATION (Data Config)
 # ============================================================================
 localization:
-  # COCO category information (Used by coco_to_yolo.py)
-  category_name: container_id
-  category_id: 2
+  # COCO category information
+  cont_id_category_id: 2        # Container ID category (for keypoints)
+  cont_id_category_name: container_id
+  
+  cont_door_category_id: 1      # Container Door category (for cropping bbox)
+  cont_door_category_name: container_door
   
   # Keypoints configuration
   num_keypoints: 4  # 4-point polygon (TL, TR, BR, BL)
@@ -101,11 +104,8 @@ localization:
   # Filter strategy
   filter_unreadable: true  # Remove unreadable samples from training
   
-  # Module 3 preprocessing parameters
-  door_category_id: 1  # Category ID for container_door (used for cropping)
-  min_crop_size: 32    # Minimum crop size in pixels (validation threshold)
-  
   # Image preprocessing
+  min_crop_size: 32    # Minimum crop size in pixels (validation threshold)
   img_size: 640
 
 # ============================================================================

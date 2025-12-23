@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Dict, List, Tuple
 
 import yaml
+from PIL import Image, ImageOps
 
 
 class COCOToYOLOConverter:
@@ -215,9 +216,22 @@ class COCOToYOLOConverter:
                 print(f"    ⚠ Warning: Image not found: {src_img_path}")
                 continue
 
-            # Copy image
+            # Load image and apply EXIF orientation (fix rotation issues)
             dst_img_path = images_dir / img["file_name"]
-            shutil.copy2(src_img_path, dst_img_path)
+            try:
+                img_pil = Image.open(src_img_path)
+                img_pil = ImageOps.exif_transpose(
+                    img_pil
+                )  # Apply EXIF rotation if present
+                if img_pil:
+                    img_pil.save(
+                        dst_img_path, quality=95
+                    )  # Save with PIL, strips unnecessary metadata
+                else:
+                    shutil.copy2(src_img_path, dst_img_path)  # Fallback if no EXIF
+            except Exception as e:
+                print(f"    ⚠ Warning: Failed to process image {src_img_path}: {e}")
+                shutil.copy2(src_img_path, dst_img_path)  # Fallback to copy
 
             # Create label file
             label_path = labels_dir / f"{Path(img['file_name']).stem}.txt"
