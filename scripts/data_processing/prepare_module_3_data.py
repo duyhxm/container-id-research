@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import yaml
-from PIL import Image
+from PIL import Image, ImageOps
 
 # Setup logging
 logging.basicConfig(
@@ -82,8 +82,9 @@ class Module3DataPreparator:
             (None, None) if validation fails
         """
         try:
-            # Load image
+            # Load image and apply EXIF orientation (fix rotation issues)
             img = Image.open(image_path)
+            img = ImageOps.exif_transpose(img)  # Apply EXIF rotation if present
             orig_width, orig_height = img.size
 
             # Extract bbox coordinates
