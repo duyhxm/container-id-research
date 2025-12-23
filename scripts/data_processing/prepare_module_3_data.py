@@ -28,6 +28,8 @@ from typing import Dict, List, Optional, Tuple
 import yaml
 from PIL import Image, ImageOps
 
+from src.utils.constants import MIN_CROP_SIZE, YOLO_VISIBLE
+
 # Setup logging
 logging.basicConfig(
     level=logging.INFO,
@@ -36,8 +38,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Constants
-YOLO_VISIBLE = 2  # YOLO visibility flag: 2 = visible
-MIN_CROP_SIZE = 32  # Minimum crop size for YOLO training
 FILTER_VALUES = {"unreadable", "unknown"}  # OCR feasibility values to filter
 
 

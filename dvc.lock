@@ -85,8 +85,8 @@ stages:
       size: 108193
     - path: src/data/coco_to_yolo.py
       hash: md5
-      md5: 09297c60c11ff9bd8aa010931276b155
-      size: 15833
+      md5: 83f5090daa8567be449cab35098ee587
+      size: 15910
     params:
       data/data_config.yaml:
         detection.category_id: 1
@@ -121,8 +121,8 @@ stages:
       nfiles: 831
     - path: scripts/data_processing/prepare_module_3_data.py
       hash: md5
-      md5: aa083661cc706e826d9ed8fc94c908c8
-      size: 18463
+      md5: 6fc1ebb989c24cf4ba1e6c8351cb7fee
+      size: 18412
     params:
       data/data_config.yaml:
         localization.cont_door_category_id: 1

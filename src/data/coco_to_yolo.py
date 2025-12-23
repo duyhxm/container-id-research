@@ -17,6 +17,8 @@ from typing import Dict, List, Tuple
 import yaml
 from PIL import Image, ImageOps
 
+from src.utils.constants import YOLO_VISIBLE
+
 
 class COCOToYOLOConverter:
     """Converts COCO format to YOLO format with module-specific filtering."""
@@ -123,8 +125,8 @@ class COCOToYOLOConverter:
             x_norm = max(0, min(1, x_norm))
             y_norm = max(0, min(1, y_norm))
 
-            # YOLO pose visibility: 2 = visible (all polygon points are visible)
-            v_yolo = 2
+            # YOLO pose visibility: all polygon points are visible
+            v_yolo = YOLO_VISIBLE
 
             normalized_kpts.extend([x_norm, y_norm, v_yolo])
 
@@ -163,7 +165,7 @@ class COCOToYOLOConverter:
         split_name: str,
         output_dir: Path,
         category_id: int,
-    ):
+    ) -> None:
         """
         Convert one split (train/val/test) from COCO to YOLO format.
 
@@ -290,7 +292,7 @@ class COCOToYOLOConverter:
 
     def create_data_yaml(
         self, output_dir: Path, category_name: str, num_keypoints: int = None
-    ):
+    ) -> None:
         """
         Create YOLO data.yaml configuration file.
 
@@ -343,7 +345,7 @@ class COCOToYOLOConverter:
 
     def run(
         self, input_dir: Path, output_dir: Path, category_id: int, category_name: str
-    ):
+    ) -> None:
         """
         Run full conversion pipeline.
 
@@ -374,7 +376,7 @@ class COCOToYOLOConverter:
         print("=" * 80)
 
 
-def main():
+def main() -> None:
     """Main entry point."""
     parser = argparse.ArgumentParser(description="Convert COCO format to YOLO format")
     parser.add_argument(

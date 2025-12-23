@@ -108,6 +108,22 @@ pytest tests/data/test_module_3_preparation.py -v
 - **Cause**: Annotation error or bbox mismatch
 - **Solution**: Keypoints are clamped to crop boundaries with warning
 
+**Issue**: Bbox coordinates negative or exceed image dimensions
+- **Cause**: Annotation error or EXIF orientation mismatch
+- **Solution**: Script automatically clips bbox to valid range with warning
+
+**Issue**: "Invalid polygon length X for Y, expected 8"
+- **Cause**: Container ID annotation has wrong number of points
+- **Solution**: Re-annotate image with exactly 4 corner points
+
+**Issue**: Images appear rotated after processing
+- **Cause**: EXIF orientation metadata not applied during image loading
+- **Solution**: Fixed in commit 2a9ac67 - run `dvc repro` to regenerate datasets
+
+**Issue**: Image file not found during processing
+- **Cause**: Path mismatch between master JSON `rel_path` and actual file location
+- **Solution**: Verify DVC data is pulled (`dvc pull data/raw`) and paths are correct
+
 ---
 
 **Last Updated**: 2025-12-23  
