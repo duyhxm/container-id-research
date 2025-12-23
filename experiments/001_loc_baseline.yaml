@@ -12,7 +12,7 @@ localization:
   # Training hyperparameters
   training:
     epochs: 100  # Baseline epochs for keypoint detection
-    batch_size: 16  # Conservative batch size for Kaggle T4 x2
+    batch_size: 64  # Conservative batch size for Kaggle T4 x2
     optimizer: AdamW
     learning_rate: 0.001  # Base LR
     weight_decay: 0.0005
@@ -33,7 +33,7 @@ localization:
     
     # Geometric augmentation (carefully tuned for keypoint detection)
     degrees: 5.0        # Small rotation (text must remain readable)
-    translate: 0.05     # Minimal translation (5% of image)
+    translate: 0.1     # Minimal translation (10% of image)
     scale: 0.3          # Moderate scaling
     shear: 0.0          # NO shear (distorts text perspective)
     perspective: 0.0    # NO perspective (already handling perspective in Module 4)
@@ -43,7 +43,7 @@ localization:
     fliplr: 0.0  # NO horizontal flip (creates mirrored text)
     
     # Mosaic and mixup (disabled for keypoint detection)
-    mosaic: 0.0      # Disabled (can corrupt keypoint topology)
+    mosaic: 1.0      # Disabled (can corrupt keypoint topology)
     mixup: 0.0       # Disabled (not suitable for keypoints)
     copy_paste: 0.0  # Disabled
     
