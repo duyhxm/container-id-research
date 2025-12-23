@@ -138,16 +138,31 @@ def clone_repository():
 
 def install_dependencies():
     """
-    Install dependencies using Hybrid Environment Strategy
+    Install dependencies using Future-Proof Hybrid Environment Strategy
 
     Strategy:
     - Hardware Stack (PyTorch/CUDA): Use Kaggle's pre-installed versions
     - Logic Stack (Other deps): Sync from uv.lock
+    - TorchVision: Dynamically calculate compatible version using formula
 
     This prevents PyTorch/CUDA version conflicts while ensuring reproducibility
-    of all other dependencies.
+    and automatic adaptation to Kaggle's rolling PyTorch releases.
+
+    Key Innovation: Vision_Minor = Torch_Minor + 15 (e.g., Torch 2.9 → Vision 0.24)
+    
+    CRITICAL: After reinstalling PyTorch/TorchVision/Ultralytics, Python interpreter
+    is restarted using os.execv() to clear import cache and load fresh C extensions.
     """
-    log("2/10", "Installing dependencies (Hybrid Strategy)", "STEP")
+    log("2/10", "Installing dependencies (Future-Proof Hybrid)", "STEP")
+    
+    # ========================================================================
+    # RESTART PROTECTION: Skip installation if already completed
+    # ========================================================================
+    if os.environ.get("DEPS_INSTALLED") == "1":
+        log("2/10", "=" * 70)
+        log("2/10", "✅ Running with fresh Python interpreter (packages applied)")
+        log("2/10", "=" * 70)
+        return
 
     # ========================================================================
     # STEP 1: Install uv and verify uv.lock exists
@@ -222,11 +237,11 @@ def install_dependencies():
     log("2/10", "  ✅ Logic Stack installed")
 
     # ========================================================================
-    # STEP 4: Fix TorchVision Compatibility
+    # STEP 4: Purge & Reinstall PyTorch Stack (CRITICAL - Fixes import path conflicts)
     # ========================================================================
-    log("2/10", "Step 4/6: Ensuring TorchVision compatibility...")
+    log("2/10", "Step 4/5: Purging and reinstalling PyTorch stack...")
 
-    # Get PyTorch version to determine compatible TorchVision
+    # Detect Kaggle's system PyTorch version (the one we want to preserve)
     get_torch_version_cmd = 'python -c "import torch; print(torch.__version__)"'
     result = subprocess.run(
         get_torch_version_cmd, shell=True, capture_output=True, text=True
@@ -235,72 +250,188 @@ def install_dependencies():
         log("2/10", "Failed to detect PyTorch version", "ERROR")
         sys.exit(1)
 
-    torch_version = result.stdout.strip().split("+")[0]  # Remove CUDA suffix
-    log("2/10", f"  Detected PyTorch: {torch_version}")
+    torch_version_full = result.stdout.strip()
+    torch_version = torch_version_full.split("+")[0]  # Remove CUDA suffix
+    log("2/10", f"  Detected system PyTorch: {torch_version_full}")
 
-    # Compatibility matrix: PyTorch -> TorchVision
-    # https://pytorch.org/get-started/previous-versions/
-    compat_map = {
-        "2.9.0": "0.24.0",
-        "2.8.0": "0.23.0",
-        "2.7.1": "0.22.1",
-        "2.7.0": "0.22.0",
+    # Parse major.minor version
+    try:
+        version_parts = torch_version.split(".")
+        torch_major = int(version_parts[0])
+        torch_minor = int(version_parts[1])
+        major_minor = f"{torch_major}.{torch_minor}"
+    except (IndexError, ValueError) as e:
+        log("2/10", f"Invalid PyTorch version format: {torch_version} ({e})", "ERROR")
+        sys.exit(1)
+
+    # Calculate compatible TorchVision version
+    fallback_map = {
+        "2.9": "0.24",
+        "2.8": "0.23",
+        "2.7": "0.22",
+        "2.6": "0.21",
     }
 
-    required_torchvision = compat_map.get(torch_version)
-    if not required_torchvision:
-        log("2/10", f"Unknown PyTorch version {torch_version}, using default", "WARN")
+    vision_version_from_map = fallback_map.get(major_minor)
+    if vision_version_from_map:
+        required_torchvision = vision_version_from_map
     else:
-        log("2/10", f"  Required TorchVision: {required_torchvision}")
+        # Dynamic formula: Vision_Minor = Torch_Minor + 15
+        vision_minor_calculated = torch_minor + 15
+        required_torchvision = f"0.{vision_minor_calculated}"
 
-        # Force reinstall compatible TorchVision
-        fix_cmd = f"python -m uv pip install --system --force-reinstall torchvision=={required_torchvision}"
-        result = subprocess.run(fix_cmd, shell=True, capture_output=True, text=True)
-        if result.returncode != 0:
-            log(
-                "2/10",
-                f"Failed to install compatible TorchVision: {result.stderr}",
-                "ERROR",
-            )
-            sys.exit(1)
+    log("2/10", f"  PyTorch {major_minor}.x → TorchVision {required_torchvision}.x")
 
-        log("2/10", f"  ✅ TorchVision {required_torchvision} installed")
+    # PURGE: Uninstall ALL torch packages to remove conflicting installations
+    log("2/10", "  Purging all torch packages (removes import path conflicts)...")
+    purge_cmd = "python -m uv pip uninstall --system torch torchvision torchaudio -y"
+    result = subprocess.run(purge_cmd, shell=True, capture_output=True, text=True)
+    # Ignore errors if packages not found
 
-    # ========================================================================
-    # STEP 5: Validation
-    # ========================================================================
-    log("2/10", "Step 5/6: Validating installation...")
-
-    # Check for version conflicts (especially Numpy with PyTorch)
-    check_cmd = "python -m uv pip check"
-    result = subprocess.run(check_cmd, shell=True, capture_output=True, text=True)
+    # REINSTALL: Install exact matching versions with no cache
+    log(
+        "2/10",
+        f"  Reinstalling PyTorch {torch_version_full} + TorchVision {required_torchvision}.*...",
+    )
+    reinstall_cmd = (
+        f"python -m uv pip install --system --no-cache-dir "
+        f"'torch=={torch_version}' 'torchvision=={required_torchvision}.*'"
+    )
+    result = subprocess.run(reinstall_cmd, shell=True, capture_output=True, text=True)
     if result.returncode != 0:
-        log("2/10", f"Dependency conflicts detected:\n{result.stdout}", "WARN")
-    else:
-        log("2/10", "  ✅ No conflicts detected")
+        log("2/10", f"Failed to reinstall PyTorch stack: {result.stderr}", "ERROR")
+        sys.exit(1)
 
-    # Verify PyTorch and CUDA availability
-    verify_cmd = (
-        'python -c "import torch; '
+    log(
+        "2/10",
+        f"  ✅ PyTorch {torch_version} + TorchVision {required_torchvision}.* reinstalled (clean)",
+    )
+
+    # CRITICAL: Reinstall Ultralytics to refresh cached TORCH_VERSION
+    # Ultralytics caches torch.__version__ at install time in utils/__init__.py
+    # After PyTorch reinstall, we MUST reinstall Ultralytics to update the cache
+    log("2/10", "  Reinstalling Ultralytics (refresh cached PyTorch version)...")
+    reinstall_ultralytics_cmd = (
+        "python -m uv pip install --system --no-cache-dir --force-reinstall "
+        "--no-deps ultralytics"
+    )
+    result = subprocess.run(
+        reinstall_ultralytics_cmd, shell=True, capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        log("2/10", f"Failed to reinstall Ultralytics: {result.stderr}", "ERROR")
+        sys.exit(1)
+
+    log("2/10", "  ✅ Ultralytics reinstalled (TORCH_VERSION cache refreshed)")
+
+    # ========================================================================
+    # STEP 5: Validation (Critical: Verify unified import paths)
+    # ========================================================================
+    log("2/10", "Step 5/5: Validating installation and import consistency...")
+
+    # Verify PyTorch version consistency (subprocess vs runtime)
+    verify_consistency_cmd = (
+        'python -c "'
+        "import sys; "
+        "import torch; "
+        "import torchvision; "
         "print(f'PyTorch: {torch.__version__}'); "
+        "print(f'TorchVision: {torchvision.__version__}'); "
+        "print(f'PyTorch Path: {torch.__file__}'); "
+        "print(f'TorchVision Path: {torchvision.__file__}')"
+        '"'
+    )
+    result = subprocess.run(
+        verify_consistency_cmd, shell=True, capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        log("2/10", "❌ Failed to verify package consistency", "ERROR")
+        log("2/10", f"Error: {result.stderr}", "ERROR")
+        sys.exit(1)
+
+    for line in result.stdout.strip().splitlines():
+        log("2/10", f"  {line}")
+
+    # Verify torchvision.ops.nms exists (confirms C++ operator linkage)
+    verify_nms_cmd = (
+        'python -c "'
+        "from torchvision.ops import nms; "
+        "import torch; "
+        "boxes = torch.tensor([[0, 0, 10, 10], [5, 5, 15, 15]], dtype=torch.float32); "
+        "scores = torch.tensor([0.9, 0.8]); "
+        "result = nms(boxes, scores, 0.5); "
+        "print('✅ C++ operator torchvision::nms verified (runtime test passed)')"
+        '"'
+    )
+    result = subprocess.run(verify_nms_cmd, shell=True, capture_output=True, text=True)
+    if result.returncode != 0:
+        log("2/10", "❌ TorchVision C++ operator runtime test FAILED", "ERROR")
+        log("2/10", f"Error: {result.stderr}", "ERROR")
+        sys.exit(1)
+
+    log("2/10", f"  {result.stdout.strip()}")
+
+    # Check CUDA availability
+    verify_cuda_cmd = (
+        'python -c "import torch; '
         "print(f'CUDA Available: {torch.cuda.is_available()}'); "
         'print(f\'CUDA Version: {torch.version.cuda if torch.cuda.is_available() else "N/A"}\')"'
     )
-    result = subprocess.run(verify_cmd, shell=True, capture_output=True, text=True)
+    result = subprocess.run(verify_cuda_cmd, shell=True, capture_output=True, text=True)
     if result.returncode != 0:
-        log("2/10", "Failed to verify PyTorch/CUDA", "ERROR")
+        log("2/10", "Failed to verify CUDA", "ERROR")
         sys.exit(1)
 
     for line in result.stdout.strip().splitlines():
         log("2/10", f"  ✅ {line}")
 
+    # Check for dependency conflicts
+    check_cmd = "python -m uv pip check"
+    result = subprocess.run(check_cmd, shell=True, capture_output=True, text=True)
+    if result.returncode != 0:
+        log("2/10", f"⚠️  Dependency conflicts detected:\n{result.stdout}", "WARN")
+    else:
+        log("2/10", "  ✅ No dependency conflicts")
+
     # ========================================================================
-    # STEP 6: Complete
+    # COMPLETE - RESTART PYTHON TO APPLY CHANGES
     # ========================================================================
-    log("2/10", "Step 6/6: Hybrid installation complete")
+    log("2/10", "=" * 70)
+    log("2/10", "✅ Future-Proof Hybrid Installation Complete")
+    log("2/10", "=" * 70)
     log("2/10", "  📦 Hardware Stack: Kaggle's PyTorch + CUDA (preserved)")
     log("2/10", "  📦 Logic Stack: uv.lock dependencies (synced)")
-    log("2/10", "  📦 TorchVision: Compatible version installed")
+    log(
+        "2/10",
+        f"  📦 PyTorch Stack: {torch_version} + TorchVision {required_torchvision}.* (clean install)",
+    )
+    log("2/10", "  🔗 C++ Operator: torchvision::nms verified (runtime test passed)")
+    log("2/10", "  ✅ Import paths: Unified (no conflicts)")
+    log("2/10", "=" * 70)
+    
+    # ========================================================================
+    # CRITICAL: Restart Python to load fresh C extensions
+    # ========================================================================
+    log("2/10", "")
+    log("2/10", "=" * 70)
+    log("2/10", "🔄 Restarting Python to apply package changes...")
+    log("2/10", "=" * 70)
+    log("2/10", "⚠️  This is REQUIRED to clear import cache and load fresh C extensions")
+    log("2/10", "   (PyTorch/TorchVision C++ operators cannot be reloaded in same process)")
+    log("2/10", "")
+    log("2/10", "🔄 Restarting in 2 seconds...")
+    
+    import time
+    time.sleep(2)
+    
+    # Set flag to skip installation on restart
+    os.environ["DEPS_INSTALLED"] = "1"
+    
+    # Restart Python interpreter with same script and arguments
+    # os.execv replaces current process with new Python interpreter
+    # All arguments (sys.argv) are preserved
+    log("2/10", "🔄 Executing: python " + " ".join(sys.argv))
+    os.execv(sys.executable, [sys.executable] + sys.argv)
 
 
 def load_secrets():

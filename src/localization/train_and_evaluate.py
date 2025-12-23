@@ -325,9 +325,9 @@ def prepare_training_args(
         "mosaic": aug_cfg.get("mosaic", 0.0),
         "mixup": aug_cfg.get("mixup", 0.0),
         "copy_paste": aug_cfg.get("copy_paste", 0.0),
-        # Keypoint-specific parameters
-        "kpt_shape": kpt_cfg.get("kpt_shape", [4, 3]),
-        "flip_idx": kpt_cfg.get("flip_idx", [0, 1, 2, 3]),
+        # NOTE: kpt_shape and flip_idx are NOT training arguments
+        # They are dataset metadata that must be in data.yaml (already configured there)
+        # Passing them to model.train() causes: "kpt_shape is not a valid YOLO argument"
         # Output
         "project": project_name,
         "name": run_name,
@@ -453,7 +453,7 @@ def train_localization_model(
     logger.info(f"Training for {train_args['epochs']} epochs")
     logger.info(f"Batch size: {train_args['batch']}")
     logger.info(f"Learning rate: {train_args['lr0']}")
-    logger.info(f"Keypoint shape: {train_args['kpt_shape']}")
+    # NOTE: kpt_shape is in data.yaml, not in train_args
 
     # Train
     logger.info("Starting training...")
