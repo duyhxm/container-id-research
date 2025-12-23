@@ -42,19 +42,22 @@ stages:
     outs:
     - data/processed/detection
   convert_localization:
-    cmd: python src/data/coco_to_yolo.py --task pose --input data/interim 
-      --output data/processed/localization --category-id 2 --category-name 
-      container_id --config data/data_config.yaml
+    cmd: python scripts/data_processing/prepare_module_3_data.py --input 
+      data/interim --output data/processed/localization --images-dir data/raw 
+      --config data/data_config.yaml
     deps:
     - data/interim/test_master.json
     - data/interim/train_master.json
     - data/interim/val_master.json
-    - src/data/coco_to_yolo.py
+    - data/raw
+    - scripts/data_processing/prepare_module_3_data.py
     params:
     - data/data_config.yaml:
       - localization.category_id
       - localization.category_name
       - localization.num_keypoints
+      - localization.door_category_id
+      - localization.min_crop_size
     outs:
     - data/processed/localization
 

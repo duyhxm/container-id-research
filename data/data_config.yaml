@@ -101,6 +101,10 @@ localization:
   # Filter strategy
   filter_unreadable: true  # Remove unreadable samples from training
   
+  # Module 3 preprocessing parameters
+  door_category_id: 1  # Category ID for container_door (used for cropping)
+  min_crop_size: 32    # Minimum crop size in pixels (validation threshold)
+  
   # Image preprocessing
   img_size: 640
 

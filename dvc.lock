@@ -98,9 +98,9 @@ stages:
       size: 111035972
       nfiles: 1005
   convert_localization:
-    cmd: python src/data/coco_to_yolo.py --task pose --input data/interim 
-      --output data/processed/localization --category-id 2 --category-name 
-      container_id --config data/data_config.yaml
+    cmd: python scripts/data_processing/prepare_module_3_data.py --input 
+      data/interim --output data/processed/localization --images-dir data/raw 
+      --config data/data_config.yaml
     deps:
     - path: data/interim/test_master.json
       hash: md5
@@ -114,18 +114,25 @@ stages:
       hash: md5
       md5: 2229a1f562f7a437fab112ed3151a5c2
       size: 108193
-    - path: src/data/coco_to_yolo.py
+    - path: data/raw
       hash: md5
-      md5: 89105f555d7e9c87b358c3185b969b2c
-      size: 15108
+      md5: 7642035df874b66d2609a23b81e2813f.dir
+      size: 189475922
+      nfiles: 831
+    - path: scripts/data_processing/prepare_module_3_data.py
+      hash: md5
+      md5: 9d81b4e81ec4ba2ef2bb7712506d349b
+      size: 18310
     params:
       data/data_config.yaml:
         localization.category_id: 2
         localization.category_name: container_id
+        localization.door_category_id: 1
+        localization.min_crop_size: 32
         localization.num_keypoints: 4
     outs:
     - path: data/processed/localization
       hash: md5
-      md5: a3a4e8fbb7bb27cd779398703c9acf03.dir
-      size: 108481307
+      md5: 950a2a14bcb1060ef7aafba40d8289c6.dir
+      size: 71148785
       nfiles: 979
