@@ -129,31 +129,84 @@ def prepare_training_args(
         except Exception:
             hardware_cfg = {}
 
-    # WORKAROUND: Force single GPU due to Ultralytics bug #19519
-    # Multi-GPU training (device=[0,1]) causes model.train() to return None
-    # instead of results object, breaking metrics logging and test evaluation.
-    # See: https://github.com/ultralytics/ultralytics/issues/19519
-    # TODO: Remove this workaround when upstream bug is fixed
-    if hardware_cfg.get("multi_gpu", False):
-        logging.warning("=" * 70)
-        logging.warning("⚠️  MULTI-GPU MODE DISABLED (Ultralytics Bug #19519)")
-        logging.warning("=" * 70)
-        logging.warning(
-            "Issue: model.train() returns None with multi-GPU (device=[0,1])"
-        )
-        logging.warning("Impact: Breaks metrics logging and test evaluation")
-        logging.warning("Workaround: Training on single GPU (device=0)")
-        logging.warning(
-            "Performance: ~2x slower than multi-GPU, but results are stable"
-        )
-        logging.warning(
-            "Reference: https://github.com/ultralytics/ultralytics/issues/19519"
-        )
-        logging.warning("=" * 70)
-        logging.warning("")
+    # GPU Configuration: Auto-detect available GPUs and configure device
+    try:
+        import torch
 
-    # Always use single GPU (device=0) until Ultralytics bug is resolved
-    device = 0
+        if not torch.cuda.is_available():
+            raise RuntimeError(
+                "No GPU detected! This training script requires CUDA-enabled GPU.\n"
+                "Possible solutions:\n"
+                "  1. Check NVIDIA driver installation: nvidia-smi\n"
+                "  2. Verify PyTorch CUDA installation: python -c 'import torch; print(torch.cuda.is_available())'\n"
+                "  3. Install PyTorch with CUDA: pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118"
+            )
+
+        gpu_count = torch.cuda.device_count()
+        multi_gpu_enabled = hardware_cfg.get("multi_gpu", False)
+
+        if gpu_count == 0:
+            raise RuntimeError(
+                "torch.cuda.is_available() is True but device_count() is 0"
+            )
+
+        elif gpu_count == 1:
+            # Single GPU available
+            device = 0
+            logging.info("=" * 70)
+            logging.info("🎯 GPU Configuration: SINGLE GPU MODE")
+            logging.info("=" * 70)
+            logging.info(f"GPU Detected: {torch.cuda.get_device_name(0)}")
+            logging.info(
+                f"VRAM: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.2f} GB"
+            )
+            logging.info("Status: Training will use GPU 0")
+            if multi_gpu_enabled:
+                logging.info("Note: multi_gpu=True in config, but only 1 GPU available")
+            logging.info("=" * 70)
+            logging.info("")
+
+        else:
+            # Multiple GPUs available
+            if multi_gpu_enabled:
+                # Use all available GPUs
+                device = list(range(gpu_count))
+                logging.info("=" * 70)
+                logging.info("🚀 GPU Configuration: MULTI-GPU MODE")
+                logging.info("=" * 70)
+                logging.info(f"GPUs Detected: {gpu_count}")
+                for i in range(gpu_count):
+                    logging.info(f"  GPU {i}: {torch.cuda.get_device_name(i)}")
+                    logging.info(
+                        f"    VRAM: {torch.cuda.get_device_properties(i).total_memory / 1024**3:.2f} GB"
+                    )
+                logging.info(f"Status: Training will use GPUs {device}")
+                logging.info("Note: Distributed Data Parallel (DDP) will be used")
+                logging.info("=" * 70)
+                logging.info("")
+            else:
+                # Multi-GPU available but not enabled in config
+                device = 0
+                logging.info("=" * 70)
+                logging.info(
+                    "🎯 GPU Configuration: SINGLE GPU MODE (Multi-GPU Available)"
+                )
+                logging.info("=" * 70)
+                logging.info(f"GPUs Detected: {gpu_count}")
+                for i in range(gpu_count):
+                    logging.info(f"  GPU {i}: {torch.cuda.get_device_name(i)}")
+                logging.info(f"Status: Training will use GPU 0 only")
+                logging.info("Reason: multi_gpu=False in config")
+                logging.info(
+                    f"Performance: Consider enabling multi_gpu=True for ~{gpu_count}x speedup"
+                )
+                logging.info("=" * 70)
+                logging.info("")
+
+    except ImportError:
+        raise ImportError(
+            "PyTorch not installed. Install with: pip install torch torchvision"
+        )
 
     args = {
         # Data
