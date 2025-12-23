@@ -222,9 +222,54 @@ def install_dependencies():
     log("2/10", "  ✅ Logic Stack installed")
 
     # ========================================================================
-    # STEP 4: Validation
+    # STEP 4: Fix TorchVision Compatibility
     # ========================================================================
-    log("2/10", "Step 4/5: Validating installation...")
+    log("2/10", "Step 4/6: Ensuring TorchVision compatibility...")
+
+    # Get PyTorch version to determine compatible TorchVision
+    get_torch_version_cmd = 'python -c "import torch; print(torch.__version__)"'
+    result = subprocess.run(
+        get_torch_version_cmd, shell=True, capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        log("2/10", "Failed to detect PyTorch version", "ERROR")
+        sys.exit(1)
+
+    torch_version = result.stdout.strip().split("+")[0]  # Remove CUDA suffix
+    log("2/10", f"  Detected PyTorch: {torch_version}")
+
+    # Compatibility matrix: PyTorch -> TorchVision
+    # https://pytorch.org/get-started/previous-versions/
+    compat_map = {
+        "2.9.0": "0.24.0",
+        "2.8.0": "0.23.0",
+        "2.7.1": "0.22.1",
+        "2.7.0": "0.22.0",
+    }
+
+    required_torchvision = compat_map.get(torch_version)
+    if not required_torchvision:
+        log("2/10", f"Unknown PyTorch version {torch_version}, using default", "WARN")
+    else:
+        log("2/10", f"  Required TorchVision: {required_torchvision}")
+
+        # Force reinstall compatible TorchVision
+        fix_cmd = f"python -m uv pip install --system --force-reinstall torchvision=={required_torchvision}"
+        result = subprocess.run(fix_cmd, shell=True, capture_output=True, text=True)
+        if result.returncode != 0:
+            log(
+                "2/10",
+                f"Failed to install compatible TorchVision: {result.stderr}",
+                "ERROR",
+            )
+            sys.exit(1)
+
+        log("2/10", f"  ✅ TorchVision {required_torchvision} installed")
+
+    # ========================================================================
+    # STEP 5: Validation
+    # ========================================================================
+    log("2/10", "Step 5/6: Validating installation...")
 
     # Check for version conflicts (especially Numpy with PyTorch)
     check_cmd = "python -m uv pip check"
@@ -250,11 +295,12 @@ def install_dependencies():
         log("2/10", f"  ✅ {line}")
 
     # ========================================================================
-    # STEP 5: Complete
+    # STEP 6: Complete
     # ========================================================================
-    log("2/10", "Step 5/5: Hybrid installation complete")
+    log("2/10", "Step 6/6: Hybrid installation complete")
     log("2/10", "  📦 Hardware Stack: Kaggle's PyTorch + CUDA (preserved)")
     log("2/10", "  📦 Logic Stack: uv.lock dependencies (synced)")
+    log("2/10", "  📦 TorchVision: Compatible version installed")
 
 
 def load_secrets():
