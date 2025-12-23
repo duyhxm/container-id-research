@@ -1,0 +1,79 @@
+# Experiment 001: Localization Baseline
+# Module: Localization (Container ID Region Estimation)
+# Description: YOLOv11s-Pose baseline training for 4-point keypoint detection
+
+localization:
+  # Model configuration
+  model:
+    architecture: yolo11s-pose  # YOLOv11-Small Pose Estimation
+    pretrained: true
+    resume_from: null  # null = train from scratch, or path to checkpoint
+    
+  # Training hyperparameters
+  training:
+    epochs: 100  # Baseline epochs for keypoint detection
+    batch_size: 16  # Conservative batch size for Kaggle T4 x2
+    optimizer: AdamW
+    learning_rate: 0.001  # Base LR
+    weight_decay: 0.0005
+    warmup_epochs: 3
+    
+    # Learning rate schedule
+    lr_scheduler: cosine
+    
+    # Early stopping
+    patience: 20  # Stop if no improvement for 20 epochs
+    
+  # Augmentation (YOLO built-in)
+  augmentation:
+    # Color augmentation (conservative for text regions)
+    hsv_h: 0.01  # Minimal hue shift (text color is important)
+    hsv_s: 0.4   # Moderate saturation
+    hsv_v: 0.3   # Moderate value
+    
+    # Geometric augmentation (carefully tuned for keypoint detection)
+    degrees: 5.0        # Small rotation (text must remain readable)
+    translate: 0.05     # Minimal translation (5% of image)
+    scale: 0.3          # Moderate scaling
+    shear: 0.0          # NO shear (distorts text perspective)
+    perspective: 0.0    # NO perspective (already handling perspective in Module 4)
+    
+    # Flipping (CRITICAL: NO horizontal flip for text!)
+    flipud: 0.0  # NO vertical flip
+    fliplr: 0.0  # NO horizontal flip (creates mirrored text)
+    
+    # Mosaic and mixup (disabled for keypoint detection)
+    mosaic: 0.0      # Disabled (can corrupt keypoint topology)
+    mixup: 0.0       # Disabled (not suitable for keypoints)
+    copy_paste: 0.0  # Disabled
+    
+  # Keypoint-specific configuration
+  keypoints:
+    # Keypoint shape: [num_keypoints, num_coordinates]
+    # 4 keypoints (TL, TR, BR, BL), 3 values each (x, y, visibility)
+    kpt_shape: [4, 3]
+    
+    # Flip indices (identity mapping since we disable flipping)
+    # Format: [kpt0_flip_idx, kpt1_flip_idx, kpt2_flip_idx, kpt3_flip_idx]
+    flip_idx: [0, 1, 2, 3]  # No remapping needed (flipping disabled)
+    
+  # Validation
+  validation:
+    conf_threshold: 0.25  # Keypoint confidence threshold
+    iou_threshold: 0.45   # NMS IoU threshold for bboxes
+    
+  # Experiment tracking
+  wandb:
+    project: container-id-research
+    tags:
+      - module-3
+      - localization
+      - yolo11s-pose
+      - baseline
+    notes: "Baseline training for Container ID 4-point keypoint detection"
+
+# Hardware configuration (for Kaggle T4 x2)
+hardware:
+  multi_gpu: true           # Enable multi-GPU for Kaggle T4 x2
+  num_workers: 4            # Data loading workers
+  mixed_precision: true     # Use AMP for faster training
