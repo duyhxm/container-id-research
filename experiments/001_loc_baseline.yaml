@@ -2,6 +2,10 @@
 # Module: Localization (Container ID Region Estimation)
 # Description: YOLOv11s-Pose baseline training for 4-point keypoint detection
 
+# Experiment metadata
+experiment:
+  name: localization_exp001_yolo11s_pose_baseline
+
 localization:
   # Model configuration
   model:

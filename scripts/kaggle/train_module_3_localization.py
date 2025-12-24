@@ -15,8 +15,10 @@ Estimated time: 2-3 hours on GPU T4 x2
 
 import json
 import os
+import re
 import subprocess
 import sys
+import tomllib
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
@@ -51,9 +53,6 @@ CONFIG = {
     "dataset_path": Path("data/processed/localization"),
     "github_username": "duyhxm",
     "secrets_path": KAGGLE_INPUT_DIR,
-    "env_dataset_path": KAGGLE_INPUT_DIR / "container-id-research-env",
-    "env_archive": "python_env.tar.gz",
-    "venv_name": "kaggle_env",
 }
 
 # ============================================================================
@@ -167,99 +166,150 @@ def clone_repository() -> None:
     log("1/10", f"Cloned to {repo_path}")
 
 
-def extract_and_activate_environment() -> Path:
+def fix_data_yaml(repo_path: Path) -> None:
     """
-    Extract pre-built Python environment from Kaggle Dataset.
+    Fix data.yaml to use relative paths instead of absolute Windows paths.
+
+    The data.yaml file may contain absolute paths from the local development
+    environment (e.g., E:\\container-id-research\\...). This function converts
+    them to relative paths that work on Kaggle Linux environment.
+
+    Args:
+        repo_path: Path to cloned repository
+
+    Example:
+        Before: path: E:\\container-id-research\\data\\processed\\localization
+        After:  path: data/processed/localization
+    """
+    log("1.5/10", "Fixing data.yaml paths for Kaggle environment", "STEP")
+
+    data_yaml_path = repo_path / "data" / "processed" / "localization" / "data.yaml"
+
+    if not data_yaml_path.exists():
+        log("1.5/10", f"data.yaml not found at {data_yaml_path}", "WARN")
+        return
+
+    import yaml
+
+    # Read current data.yaml
+    with open(data_yaml_path, "r") as f:
+        data = yaml.safe_load(f)
+
+    # Fix paths to be relative
+    if "path" in data:
+        # Convert absolute Windows path to relative path
+        old_path = str(data["path"])
+        # Extract relative part after project root
+        if (
+            "data/processed/localization" in old_path
+            or "data\\processed\\localization" in old_path
+        ):
+            data["path"] = "data/processed/localization"
+            log("1.5/10", f"  Fixed 'path': {old_path} → {data['path']}")
+
+    # Fix train/val/test paths if they are absolute
+    for split in ["train", "val", "test"]:
+        if split in data and data[split]:
+            old_path = str(data[split])
+            # Convert to relative path
+            if "images" in old_path:
+                data[split] = f"images/{split}"
+                log("1.5/10", f"  Fixed '{split}': {old_path} → {data[split]}")
+
+    # Write back fixed data.yaml
+    with open(data_yaml_path, "w") as f:
+        yaml.dump(data, f, default_flow_style=False)
+
+    log("1.5/10", "  ✅ data.yaml paths fixed for Kaggle")
+
+
+def setup_dependencies(repo_path: Path) -> None:
+    """
+    Install dependencies from pyproject.toml using runtime pip installation.
 
     Strategy:
-    - Use STATIC environment (pre-built with all dependencies)
-    - Extract python_env.tar.gz from Kaggle Dataset
-    - Activate virtual environment
-    - NO installation, NO version conflicts, 100% reproducible
+    - Read pyproject.toml from cloned repository
+    - Extract project.dependencies list
+    - Strip version constraints (e.g., pandas>=2.3.3 → pandas)
+    - Install via pip (let Kaggle resolve compatible versions)
 
-    This replaces the previous "Hybrid" strategy that installed packages at runtime.
-    The environment was built using build_environment.py and uploaded as Kaggle Dataset.
+    This allows Kaggle's pre-installed packages to be used where possible
+    and avoids version conflicts with locked dependencies.
 
-    Returns:
-        Path to the extracted virtual environment directory
+    Args:
+        repo_path: Path to cloned repository containing pyproject.toml
+
+    Raises:
+        SystemExit: If pyproject.toml not found or pip installation fails
     """
-    log("2/10", "Extracting pre-built environment (Static Strategy)", "STEP")
-
-    # Check if environment archive exists in Kaggle Dataset
-    env_dataset_path = CONFIG["env_dataset_path"]
-    env_archive_path = env_dataset_path / CONFIG["env_archive"]
-
-    if not env_archive_path.exists():
-        log("2/10", f"Environment archive not found: {env_archive_path}", "ERROR")
-        log("2/10", "", "ERROR")
-        log("2/10", "SOLUTION:", "ERROR")
-        log("2/10", "  1. Build environment locally using:", "ERROR")
-        log("2/10", "     python scripts/kaggle/build_environment.py", "ERROR")
-        log("2/10", "  2. Upload python_env.tar.gz to Kaggle Dataset:", "ERROR")
-        log("2/10", "     Dataset name: 'container-id-research-env'", "ERROR")
-        log("2/10", "  3. Add dataset to this notebook's inputs", "ERROR")
-        sys.exit(1)
-
-    log("2/10", f"  Found environment archive: {env_archive_path.name}")
-    size_mb = env_archive_path.stat().st_size / (1024 * 1024)
-    log("2/10", f"  Size: {size_mb:.2f} MB")
-
-    # Extract to working directory
-    venv_path = KAGGLE_WORKING_DIR / CONFIG["venv_name"]
-    marker_file = venv_path / ".extraction_complete"
-
-    # M1: Check for marker file to detect incomplete extractions
-    if venv_path.exists() and marker_file.exists():
-        log("2/10", "  Environment already extracted (marker found), skipping...")
-    else:
-        # Clean up incomplete extraction
-        if venv_path.exists():
-            log("2/10", "  Incomplete extraction detected, cleaning up...")
-            import shutil
-
-            shutil.rmtree(venv_path)
-
-        log("2/10", "  Extracting environment (this may take 1-2 minutes)...")
-        cmd = f"tar -xzf {env_archive_path} -C {KAGGLE_WORKING_DIR}"
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-        if result.returncode != 0:
-            log("2/10", f"Failed to extract environment: {result.stderr}", "ERROR")
-            sys.exit(1)
-
-        # Create marker file after successful extraction
-        marker_file.touch()
-        log("2/10", f"  ✅ Environment extracted to {venv_path}")
-        log("2/10", f"  ✅ Marker file created: {marker_file.name}")
-
-    # Validate environment
-    log("2/10", "  Validating environment...")
-    python_bin = venv_path / "bin" / "python"
-
-    if not python_bin.exists():
-        log("2/10", f"Python binary not found: {python_bin}", "ERROR")
-        sys.exit(1)
-
-    # Check Python version
-    version_output = subprocess.run(
-        [str(python_bin), "--version"], capture_output=True, text=True
+    log(
+        "2/10", "Installing dependencies from pyproject.toml (Runtime Strategy)", "STEP"
     )
-    log("2/10", f"  Python: {version_output.stdout.strip()}")
 
-    # Verify critical packages
+    # Locate pyproject.toml
+    pyproject_path = repo_path / "pyproject.toml"
+    if not pyproject_path.exists():
+        log("2/10", f"pyproject.toml not found at {pyproject_path}", "ERROR")
+        sys.exit(1)
+
+    log("2/10", f"  Reading dependencies from {pyproject_path.name}")
+
+    # Read and parse pyproject.toml
+    try:
+        with open(pyproject_path, "rb") as f:
+            pyproject_data = tomllib.load(f)
+    except Exception as e:
+        log("2/10", f"Failed to parse pyproject.toml: {e}", "ERROR")
+        sys.exit(1)
+
+    # Extract dependencies
+    dependencies = pyproject_data.get("project", {}).get("dependencies", [])
+    if not dependencies:
+        log("2/10", "No dependencies found in pyproject.toml", "WARN")
+        return
+
+    log("2/10", f"  Found {len(dependencies)} dependencies")
+
+    # Strip version constraints to avoid conflicts with Kaggle's environment
+    cleaned_deps = []
+    for dep in dependencies:
+        # Split on version operators to extract package name
+        match = re.split(r"[<>=~!]", dep)
+        package_name = match[0].strip()
+        cleaned_deps.append(package_name)
+
+    log("2/10", "  Stripped version constraints for compatibility")
+    log("2/10", f"  Installing {len(cleaned_deps)} packages via pip...")
+
+    # Install dependencies
+    cmd = [sys.executable, "-m", "pip", "install", "--upgrade"] + cleaned_deps
+    result = subprocess.run(cmd, capture_output=True, text=True)
+
+    if result.returncode != 0:
+        log("2/10", "Pip installation failed!", "ERROR")
+        log("2/10", result.stderr, "ERROR")
+        sys.exit(1)
+
+    log("2/10", "  ✅ All dependencies installed")
+
+    # Validate critical packages
+    log("2/10", "  Validating critical packages...")
     validation_script = """
 import torch
 import torchvision
+import ultralytics
 print(f"PyTorch: {torch.__version__}")
 print(f"TorchVision: {torchvision.__version__}")
+print(f"Ultralytics: {ultralytics.__version__}")
 print(f"CUDA Available: {torch.cuda.is_available()}")
 """
 
     result = subprocess.run(
-        [str(python_bin), "-c", validation_script], capture_output=True, text=True
+        [sys.executable, "-c", validation_script], capture_output=True, text=True
     )
 
     if result.returncode != 0:
-        log("2/10", "Environment validation failed!", "ERROR")
+        log("2/10", "Package validation failed!", "ERROR")
         log("2/10", result.stderr, "ERROR")
         sys.exit(1)
 
@@ -267,14 +317,12 @@ print(f"CUDA Available: {torch.cuda.is_available()}")
         log("2/10", f"  ✅ {line}")
 
     log("2/10", "=" * 70)
-    log("2/10", "✅ Static Environment Ready")
+    log("2/10", "✅ Runtime Environment Ready")
     log("2/10", "=" * 70)
-    log("2/10", "  📦 Pre-built environment extracted and validated")
-    log("2/10", "  🚀 No installation required")
-    log("2/10", "  ✅ 100% reproducible from uv.lock")
+    log("2/10", "  📦 Dependencies installed from pyproject.toml")
+    log("2/10", "  🚀 Using Kaggle's Python environment")
+    log("2/10", "  ✅ Version conflicts avoided via constraint stripping")
     log("2/10", "=" * 70)
-
-    return venv_path
 
 
 def load_secrets() -> Dict[str, Any]:
@@ -650,18 +698,17 @@ def download_pretrained_weights() -> None:
     log("8/10", "Weights cached")
 
 
-def train_model(venv_path: Path, experiment_name: str) -> bool:
-    """Execute training via standalone script using pre-built environment.
+def train_model(experiment_name: str) -> bool:
+    """Execute training via standalone script using system python.
 
     Args:
-        venv_path: Path to extracted virtual environment
         experiment_name: Name for this experiment run
 
-    Runs the localization training script using the Python interpreter
-    from the pre-built environment. Training is tracked by WandB.
+    Runs the localization training script using the system Python interpreter
+    (Kaggle's runtime environment with installed dependencies). Training is tracked by WandB.
 
     Architecture:
-        - Environment: Static (pre-built, uploaded as Kaggle Dataset)
+        - Environment: Runtime (pip install from pyproject.toml)
         - Data Pipeline: DVC (split_data → convert_localization)
         - Training: Standalone script (tracked by WandB)
         - Model Versioning: Manual DVC add after training
@@ -677,24 +724,18 @@ def train_model(venv_path: Path, experiment_name: str) -> bool:
     Estimated Time:
         2-3 hours on Kaggle T4 x2 GPU
     """
-    # M3: Validate virtual environment before training
-    log("9/10", "Validating virtual environment", "STEP")
+    log("9/10", "Validating Python environment", "STEP")
 
-    python_bin = venv_path / "bin" / "python"
-    if not python_bin.exists():
-        log("ERROR", f"Python not found: {python_bin}", "ERROR")
-        sys.exit(1)
-
-    # Verify it's executable
+    # Verify system python
     result = subprocess.run(
-        [str(python_bin), "--version"], capture_output=True, text=True
+        [sys.executable, "--version"], capture_output=True, text=True
     )
     if result.returncode != 0:
-        log("ERROR", "Python binary is not executable", "ERROR")
+        log("ERROR", "Python executable not found", "ERROR")
         sys.exit(1)
 
     log("9/10", f"  Python: {result.stdout.strip()}")
-    log("9/10", "  Virtual environment validated")
+    log("9/10", "  Using Kaggle runtime environment")
 
     log("9/10", "Starting training", "STEP")
     print("=" * 70)
@@ -703,7 +744,7 @@ def train_model(venv_path: Path, experiment_name: str) -> bool:
     print("=" * 70)
     print("")
     print("💡 Architecture:")
-    print("   - Environment: Static (pre-built from uv.lock)")
+    print("   - Environment: Runtime (pip install from pyproject.toml)")
     print("   - Data Pipeline: DVC (split_data → convert_localization)")
     print("   - Training: Standalone script (tracked by WandB)")
     print("   - Model Versioning: Automatic DVC add after training")
@@ -716,20 +757,23 @@ def train_model(venv_path: Path, experiment_name: str) -> bool:
 
     project_root = os.getcwd()
 
-    # Use Python from pre-built environment
-    python_bin = venv_path / "bin" / "python"
-
-    # Run training script with venv's Python
+    # Run training script with system Python
     log("9/10", "Executing standalone training script...")
-    log("9/10", f"Using Python: {python_bin}")
+    log("9/10", f"Using Python: {sys.executable}")
 
     cmd = (
-        f"{python_bin} src/localization/train_and_evaluate.py "
+        f"{sys.executable} src/localization/train_and_evaluate.py "
         f"--config experiments/001_loc_baseline.yaml "
         f"--experiment {experiment_name}"
     )
 
-    result = subprocess.run(cmd, shell=True, capture_output=False, cwd=project_root)
+    # Set PYTHONPATH to project root so imports work correctly
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(project_root)
+
+    result = subprocess.run(
+        cmd, shell=True, capture_output=False, cwd=project_root, env=env
+    )
     return result.returncode == 0
 
 
@@ -1097,7 +1141,7 @@ def main() -> None:
     """
     print("=" * 70)
     print(" CONTAINER ID LOCALIZATION TRAINING - YOLOv11s-Pose")
-    print(" (Static Environment Strategy)")
+    print(" (Runtime Installation Strategy)")
     print("=" * 70)
 
     try:
@@ -1106,36 +1150,40 @@ def main() -> None:
 
         verify_gpu()
         clone_repository()
-        venv_path = extract_and_activate_environment()  # New: Extract pre-built env
+
+        # Load experiment name from config file early (before training)
+        import yaml
+
+        with open(CONFIG["repo_path"] / "experiments/001_loc_baseline.yaml", "r") as f:
+            experiment_config = yaml.safe_load(f)
+
+        # Extract experiment name and add to CONFIG
+        CONFIG["experiment_name"] = experiment_config.get("experiment", {}).get(
+            "name", "localization_exp001_yolo11s_pose_baseline"
+        )
+        log("INFO", f"Experiment: {CONFIG['experiment_name']}")
+
+        setup_dependencies(CONFIG["repo_path"])  # New: Install from pyproject.toml
         configure_dvc(secrets)
         configure_git(secrets)
         configure_wandb(secrets)
         fetch_dataset()
-
-        # Load experiment name from config file (H3: No hardcoding)
-        import yaml
-
-        with open("experiments/001_loc_baseline.yaml", "r") as f:
-            config = yaml.safe_load(f)
-
-        # Extract experiment name from config or use default
-        experiment_name = config.get("experiment", {}).get(
-            "name", "localization_exp001_yolo11s_pose_baseline"
-        )
-        log("INFO", f"Experiment: {experiment_name}")
+        fix_data_yaml(
+            CONFIG["repo_path"]
+        )  # Fix data.yaml paths AFTER fetching from DVC
 
         display_config()
         download_pretrained_weights()
 
         success = train_model(
-            venv_path, experiment_name
-        )  # Pass venv_path and experiment_name
+            CONFIG["experiment_name"]
+        )  # Use system python, no venv_path needed
 
         if success:
             print("\n" + "=" * 70)
             print(" ✅ TRAINING COMPLETE!")
             print("=" * 70)
-            sync_outputs(experiment_name)
+            sync_outputs(CONFIG["experiment_name"])
 
             print("\n" + "=" * 70)
             print("Next steps:")
