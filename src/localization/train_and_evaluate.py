@@ -12,6 +12,7 @@ Trains YOLOv11-Pose model for 4-point keypoint detection with:
 # Standard library imports
 import argparse
 import logging
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -21,6 +22,12 @@ import yaml
 
 # Local imports
 from src.utils.logging_config import setup_logging
+
+# CRITICAL: Set WandB environment variables BEFORE any other imports
+# Ultralytics will use training args (project/name) for WandB if not set here
+# Must be set at module level to ensure it's available before model.train() call
+# This will be properly configured in train_localization_model() after loading config
+os.environ.setdefault("WANDB_PROJECT", "container-id-research")
 
 # Required configuration keys for validation
 REQUIRED_CONFIG_KEYS = [
@@ -402,13 +409,11 @@ def train_localization_model(
     # logger.info("Initializing experiment tracking...")
     # initialize_wandb(config, experiment_name)
 
-    # CRITICAL: Set WandB environment variables BEFORE any Ultralytics initialization
+    # CRITICAL: Configure WandB environment variables from config
     # This prevents Ultralytics from using local output directory as WandB project name
-    import os
-
     wandb_cfg = config.get("wandb", {})
 
-    # ALWAYS set WANDB_PROJECT to prevent Ultralytics from creating unwanted projects
+    # Override WANDB_PROJECT with value from config (or keep default)
     # Ultralytics defaults to using 'project' argument (local dir) as WandB project if not set
     os.environ["WANDB_PROJECT"] = wandb_cfg.get("project", "container-id-research")
 
