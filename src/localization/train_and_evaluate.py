@@ -196,7 +196,8 @@ def prepare_training_args(
 
     # WandB will use WANDB_PROJECT env var if set (already configured in train_localization_model)
     # This prevents Ultralytics from using local path as WandB project name
-    run_name = experiment_name if experiment_name else "train"
+    # run_name is the subfolder inside project (typically "train" for training runs)
+    run_name = "train"
 
     # Load hardware configuration from the SAME config file
     hardware_cfg = {}
