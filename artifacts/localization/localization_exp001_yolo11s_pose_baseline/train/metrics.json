@@ -1,0 +1,11 @@
+{
+  "training_duration_hours": 0.07431937083333333,
+  "val/mAP50_final": 0.0,
+  "val/mAP50-95_final": 0.0,
+  "val/precision_final": 0.0,
+  "val/recall_final": 0.0,
+  "test/mAP50": 0.9845244322910474,
+  "test/mAP50-95": 0.9454787595643236,
+  "test/precision": 0.9612189844963455,
+  "test/recall": 0.978426407390573
+}
