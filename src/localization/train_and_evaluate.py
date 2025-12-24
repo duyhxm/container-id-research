@@ -402,24 +402,28 @@ def train_localization_model(
     # logger.info("Initializing experiment tracking...")
     # initialize_wandb(config, experiment_name)
 
+    # CRITICAL: Set WandB environment variables BEFORE any Ultralytics initialization
+    # This prevents Ultralytics from using local output directory as WandB project name
+    import os
+
+    wandb_cfg = config.get("wandb", {})
+
+    # ALWAYS set WANDB_PROJECT to prevent Ultralytics from creating unwanted projects
+    # Ultralytics defaults to using 'project' argument (local dir) as WandB project if not set
+    os.environ["WANDB_PROJECT"] = wandb_cfg.get("project", "container-id-research")
+
+    # Set experiment name for WandB run (optional)
+    if experiment_name:
+        os.environ["WANDB_NAME"] = experiment_name
+    elif wandb_cfg.get("name"):
+        os.environ["WANDB_NAME"] = wandb_cfg.get("name")
+
+    logger.info(f"WandB project: {os.environ.get('WANDB_PROJECT')}")
+    logger.info(f"WandB run name: {os.environ.get('WANDB_NAME', 'auto-generated')}")
+
     # CRITICAL: Ensure WandB logging is enabled in Ultralytics settings
     # By default, WandB logging is DISABLED. We must enable it for automatic integration.
     logger.info("Configuring experiment tracking...")
-
-    # Set WandB environment variables from config
-    wandb_cfg = config.get("wandb", {})
-    if wandb_cfg:
-        import os
-
-        # Set WandB project name (separate from local output directory)
-        os.environ["WANDB_PROJECT"] = wandb_cfg.get("project", "container-id-research")
-        # Set experiment name for WandB run
-        if experiment_name:
-            os.environ["WANDB_NAME"] = experiment_name
-        elif wandb_cfg.get("name"):
-            os.environ["WANDB_NAME"] = wandb_cfg.get("name")
-        logger.info(f"WandB project: {os.environ.get('WANDB_PROJECT')}")
-        logger.info(f"WandB run name: {os.environ.get('WANDB_NAME', 'auto-generated')}")
 
     try:
         import subprocess
