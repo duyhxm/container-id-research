@@ -18,7 +18,27 @@ import os
 import subprocess
 import sys
 from datetime import datetime
+from enum import Enum
 from pathlib import Path
+from typing import Any, Dict, Optional
+
+# ============================================================================
+# Constants
+# ============================================================================
+
+# Kaggle environment paths
+KAGGLE_WORKING_DIR = Path("/kaggle/working")
+KAGGLE_INPUT_DIR = Path("/kaggle/input")
+
+
+class LogLevel(Enum):
+    """Log level enumeration for consistent logging."""
+
+    INFO = "INFO"
+    WARN = "WARN"
+    ERROR = "ERROR"
+    STEP = "STEP"
+
 
 # ============================================================================
 # Configuration
@@ -27,11 +47,13 @@ from pathlib import Path
 CONFIG = {
     "repo_url": "https://github.com/duyhxm/container-id-research.git",
     "repo_branch": "main",
-    "repo_path": Path("/kaggle/working/container-id-research"),
-    "experiment_name": "localization_exp001_yolo11s_pose_baseline",
-    "dataset_path": "data/processed/localization",
+    "repo_path": KAGGLE_WORKING_DIR / "container-id-research",
+    "dataset_path": Path("data/processed/localization"),
     "github_username": "duyhxm",
-    "secrets_path": Path("/kaggle/input"),  # Path to Kaggle dataset input
+    "secrets_path": KAGGLE_INPUT_DIR,
+    "env_dataset_path": KAGGLE_INPUT_DIR / "container-id-research-env",
+    "env_archive": "python_env.tar.gz",
+    "venv_name": "kaggle_env",
 }
 
 # ============================================================================
@@ -39,23 +61,32 @@ CONFIG = {
 # ============================================================================
 
 
-def log(step, message, level="INFO"):
+def log(step: str, message: str, level: str = "INFO") -> None:
     """Unified logging with step tracking and visual symbols.
 
     Args:
         step: Training step identifier (e.g., "1/10", "ERROR")
         message: Log message to display
-        level: Severity level. One of "INFO", "WARN", "ERROR", "STEP"
+        level: Severity level. One of "INFO", "WARN", "ERROR", "STEP" or LogLevel enum
 
     Example:
         >>> log("1/10", "Starting training", "STEP")
         📌 [1/10] Starting training
+        >>> log("1/10", "Starting training", LogLevel.STEP)
+        📌 [1/10] Starting training
     """
-    symbols = {"INFO": "✓", "WARN": "⚠️", "ERROR": "❌", "STEP": "📌"}
-    print(f"{symbols.get(level, '•')} [{step}] {message}")
+    # Support both string and LogLevel enum
+    level_str = level.value if isinstance(level, LogLevel) else level
+    symbols = {
+        LogLevel.INFO.value: "✓",
+        LogLevel.WARN.value: "⚠️",
+        LogLevel.ERROR.value: "❌",
+        LogLevel.STEP.value: "📌",
+    }
+    print(f"{symbols.get(level_str, '•')} [{step}] {message}")
 
 
-def run_command(cmd, error_msg=None, shell=True):
+def run_command(cmd: str, error_msg: Optional[str] = None, shell: bool = True) -> bool:
     """Execute shell command with error handling and optional exit on failure.
 
     Args:
@@ -83,7 +114,7 @@ def run_command(cmd, error_msg=None, shell=True):
 # ============================================================================
 
 
-def verify_gpu():
+def verify_gpu() -> None:
     """Verify GPU availability and display device information.
 
     Checks if CUDA is available via PyTorch and logs the GPU device name.
@@ -108,7 +139,7 @@ def verify_gpu():
         sys.exit(1)
 
 
-def clone_repository():
+def clone_repository() -> None:
     """Clone GitHub repository to Kaggle workspace.
 
     Clones the repository specified in CONFIG['repo_url'] to CONFIG['repo_path'].
@@ -136,305 +167,117 @@ def clone_repository():
     log("1/10", f"Cloned to {repo_path}")
 
 
-def install_dependencies():
+def extract_and_activate_environment() -> Path:
     """
-    Install dependencies using Future-Proof Hybrid Environment Strategy
+    Extract pre-built Python environment from Kaggle Dataset.
 
     Strategy:
-    - Hardware Stack (PyTorch/CUDA): Use Kaggle's pre-installed versions
-    - Logic Stack (Other deps): Sync from uv.lock
-    - TorchVision: Dynamically calculate compatible version using formula
+    - Use STATIC environment (pre-built with all dependencies)
+    - Extract python_env.tar.gz from Kaggle Dataset
+    - Activate virtual environment
+    - NO installation, NO version conflicts, 100% reproducible
 
-    This prevents PyTorch/CUDA version conflicts while ensuring reproducibility
-    and automatic adaptation to Kaggle's rolling PyTorch releases.
+    This replaces the previous "Hybrid" strategy that installed packages at runtime.
+    The environment was built using build_environment.py and uploaded as Kaggle Dataset.
 
-    Key Innovation: Vision_Minor = Torch_Minor + 15 (e.g., Torch 2.9 → Vision 0.24)
-    
-    CRITICAL: After reinstalling PyTorch/TorchVision/Ultralytics, Python interpreter
-    is restarted using os.execv() to clear import cache and load fresh C extensions.
+    Returns:
+        Path to the extracted virtual environment directory
     """
-    log("2/10", "Installing dependencies (Future-Proof Hybrid)", "STEP")
-    
-    # ========================================================================
-    # RESTART PROTECTION: Skip installation if already completed
-    # ========================================================================
-    if os.environ.get("DEPS_INSTALLED") == "1":
-        log("2/10", "=" * 70)
-        log("2/10", "✅ Running with fresh Python interpreter (packages applied)")
-        log("2/10", "=" * 70)
-        return
+    log("2/10", "Extracting pre-built environment (Static Strategy)", "STEP")
 
-    # ========================================================================
-    # STEP 1: Install uv and verify uv.lock exists
-    # ========================================================================
-    log("2/10", "Step 1/5: Installing uv...")
-    run_command("pip install -q uv", "Failed to install uv")
+    # Check if environment archive exists in Kaggle Dataset
+    env_dataset_path = CONFIG["env_dataset_path"]
+    env_archive_path = env_dataset_path / CONFIG["env_archive"]
 
-    if not Path("uv.lock").exists():
-        log("2/10", "uv.lock not found in repository", "ERROR")
-        sys.exit(1)
-    log("2/10", "  ✅ uv.lock verified")
-
-    # ========================================================================
-    # STEP 2: Export & Filter (The Logic Stack)
-    # ========================================================================
-    log("2/10", "Step 2/5: Exporting and filtering requirements...")
-
-    # Export from uv.lock (frozen snapshot, no hashes, no project itself)
-    export_cmd = (
-        "python -m uv export --frozen --format=requirements-txt "
-        "--no-hashes --no-emit-project"
-    )
-    result = subprocess.run(export_cmd, shell=True, capture_output=True, text=True)
-    if result.returncode != 0:
-        log("2/10", f"Failed to export from uv.lock: {result.stderr}", "ERROR")
+    if not env_archive_path.exists():
+        log("2/10", f"Environment archive not found: {env_archive_path}", "ERROR")
+        log("2/10", "", "ERROR")
+        log("2/10", "SOLUTION:", "ERROR")
+        log("2/10", "  1. Build environment locally using:", "ERROR")
+        log("2/10", "     python scripts/kaggle/build_environment.py", "ERROR")
+        log("2/10", "  2. Upload python_env.tar.gz to Kaggle Dataset:", "ERROR")
+        log("2/10", "     Dataset name: 'container-id-research-env'", "ERROR")
+        log("2/10", "  3. Add dataset to this notebook's inputs", "ERROR")
         sys.exit(1)
 
-    # Filter out Hardware Stack packages using Python string manipulation
-    # Exclude: PyTorch, TorchVision, TorchAudio, NVIDIA/CUDA libraries
-    exclude_keywords = ["torch", "torchvision", "torchaudio", "nvidia-", "cuda-"]
-    filtered_lines = []
+    log("2/10", f"  Found environment archive: {env_archive_path.name}")
+    size_mb = env_archive_path.stat().st_size / (1024 * 1024)
+    log("2/10", f"  Size: {size_mb:.2f} MB")
 
-    for line in result.stdout.splitlines():
-        line = line.strip()
-        # Skip empty lines and comments
-        if not line or line.startswith("#"):
-            continue
-        # Check if any excluded keyword is in the line (case-insensitive)
-        if not any(keyword in line.lower() for keyword in exclude_keywords):
-            filtered_lines.append(line)
+    # Extract to working directory
+    venv_path = KAGGLE_WORKING_DIR / CONFIG["venv_name"]
+    marker_file = venv_path / ".extraction_complete"
 
-    # Save filtered requirements to temporary file
-    temp_req_file = Path("/tmp/filtered_requirements.txt")
-    temp_req_file.write_text("\n".join(filtered_lines))
-
-    log("2/10", f"  ✅ Filtered {len(filtered_lines)} packages (excluded PyTorch/CUDA)")
-
-    # ========================================================================
-    # STEP 3: Install to System (The Hybrid Step)
-    # ========================================================================
-    log("2/10", "Step 3/5: Installing Logic Stack to system Python...")
-
-    # Install filtered requirements to system Python
-    install_cmd = f"python -m uv pip install --system -r {temp_req_file}"
-    result = subprocess.run(install_cmd, shell=True, capture_output=True, text=True)
-    if result.returncode != 0:
-        log(
-            "2/10", f"Failed to install filtered requirements: {result.stderr}", "ERROR"
-        )
-        sys.exit(1)
-
-    # Install project in editable mode WITHOUT dependencies (already installed above)
-    # --no-deps prevents re-installing dependencies (especially PyTorch)
-    install_project_cmd = "python -m uv pip install --system --no-deps -e ."
-    result = subprocess.run(
-        install_project_cmd, shell=True, capture_output=True, text=True
-    )
-    if result.returncode != 0:
-        log("2/10", f"Failed to install project: {result.stderr}", "ERROR")
-        sys.exit(1)
-
-    log("2/10", "  ✅ Logic Stack installed")
-
-    # ========================================================================
-    # STEP 4: Purge & Reinstall PyTorch Stack (CRITICAL - Fixes import path conflicts)
-    # ========================================================================
-    log("2/10", "Step 4/5: Purging and reinstalling PyTorch stack...")
-
-    # Detect Kaggle's system PyTorch version (the one we want to preserve)
-    get_torch_version_cmd = 'python -c "import torch; print(torch.__version__)"'
-    result = subprocess.run(
-        get_torch_version_cmd, shell=True, capture_output=True, text=True
-    )
-    if result.returncode != 0:
-        log("2/10", "Failed to detect PyTorch version", "ERROR")
-        sys.exit(1)
-
-    torch_version_full = result.stdout.strip()
-    torch_version = torch_version_full.split("+")[0]  # Remove CUDA suffix
-    log("2/10", f"  Detected system PyTorch: {torch_version_full}")
-
-    # Parse major.minor version
-    try:
-        version_parts = torch_version.split(".")
-        torch_major = int(version_parts[0])
-        torch_minor = int(version_parts[1])
-        major_minor = f"{torch_major}.{torch_minor}"
-    except (IndexError, ValueError) as e:
-        log("2/10", f"Invalid PyTorch version format: {torch_version} ({e})", "ERROR")
-        sys.exit(1)
-
-    # Calculate compatible TorchVision version
-    fallback_map = {
-        "2.9": "0.24",
-        "2.8": "0.23",
-        "2.7": "0.22",
-        "2.6": "0.21",
-    }
-
-    vision_version_from_map = fallback_map.get(major_minor)
-    if vision_version_from_map:
-        required_torchvision = vision_version_from_map
+    # M1: Check for marker file to detect incomplete extractions
+    if venv_path.exists() and marker_file.exists():
+        log("2/10", "  Environment already extracted (marker found), skipping...")
     else:
-        # Dynamic formula: Vision_Minor = Torch_Minor + 15
-        vision_minor_calculated = torch_minor + 15
-        required_torchvision = f"0.{vision_minor_calculated}"
+        # Clean up incomplete extraction
+        if venv_path.exists():
+            log("2/10", "  Incomplete extraction detected, cleaning up...")
+            import shutil
 
-    log("2/10", f"  PyTorch {major_minor}.x → TorchVision {required_torchvision}.x")
+            shutil.rmtree(venv_path)
 
-    # PURGE: Uninstall ALL torch packages to remove conflicting installations
-    log("2/10", "  Purging all torch packages (removes import path conflicts)...")
-    purge_cmd = "python -m uv pip uninstall --system torch torchvision torchaudio -y"
-    result = subprocess.run(purge_cmd, shell=True, capture_output=True, text=True)
-    # Ignore errors if packages not found
+        log("2/10", "  Extracting environment (this may take 1-2 minutes)...")
+        cmd = f"tar -xzf {env_archive_path} -C {KAGGLE_WORKING_DIR}"
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        if result.returncode != 0:
+            log("2/10", f"Failed to extract environment: {result.stderr}", "ERROR")
+            sys.exit(1)
 
-    # REINSTALL: Install exact matching versions with no cache
-    log(
-        "2/10",
-        f"  Reinstalling PyTorch {torch_version_full} + TorchVision {required_torchvision}.*...",
-    )
-    reinstall_cmd = (
-        f"python -m uv pip install --system --no-cache-dir "
-        f"'torch=={torch_version}' 'torchvision=={required_torchvision}.*'"
-    )
-    result = subprocess.run(reinstall_cmd, shell=True, capture_output=True, text=True)
-    if result.returncode != 0:
-        log("2/10", f"Failed to reinstall PyTorch stack: {result.stderr}", "ERROR")
+        # Create marker file after successful extraction
+        marker_file.touch()
+        log("2/10", f"  ✅ Environment extracted to {venv_path}")
+        log("2/10", f"  ✅ Marker file created: {marker_file.name}")
+
+    # Validate environment
+    log("2/10", "  Validating environment...")
+    python_bin = venv_path / "bin" / "python"
+
+    if not python_bin.exists():
+        log("2/10", f"Python binary not found: {python_bin}", "ERROR")
         sys.exit(1)
 
-    log(
-        "2/10",
-        f"  ✅ PyTorch {torch_version} + TorchVision {required_torchvision}.* reinstalled (clean)",
+    # Check Python version
+    version_output = subprocess.run(
+        [str(python_bin), "--version"], capture_output=True, text=True
     )
+    log("2/10", f"  Python: {version_output.stdout.strip()}")
 
-    # CRITICAL: Reinstall Ultralytics to refresh cached TORCH_VERSION
-    # Ultralytics caches torch.__version__ at install time in utils/__init__.py
-    # After PyTorch reinstall, we MUST reinstall Ultralytics to update the cache
-    log("2/10", "  Reinstalling Ultralytics (refresh cached PyTorch version)...")
-    reinstall_ultralytics_cmd = (
-        "python -m uv pip install --system --no-cache-dir --force-reinstall "
-        "--no-deps ultralytics"
-    )
+    # Verify critical packages
+    validation_script = """
+import torch
+import torchvision
+print(f"PyTorch: {torch.__version__}")
+print(f"TorchVision: {torchvision.__version__}")
+print(f"CUDA Available: {torch.cuda.is_available()}")
+"""
+
     result = subprocess.run(
-        reinstall_ultralytics_cmd, shell=True, capture_output=True, text=True
+        [str(python_bin), "-c", validation_script], capture_output=True, text=True
     )
+
     if result.returncode != 0:
-        log("2/10", f"Failed to reinstall Ultralytics: {result.stderr}", "ERROR")
+        log("2/10", "Environment validation failed!", "ERROR")
+        log("2/10", result.stderr, "ERROR")
         sys.exit(1)
 
-    log("2/10", "  ✅ Ultralytics reinstalled (TORCH_VERSION cache refreshed)")
-
-    # ========================================================================
-    # STEP 5: Validation (Critical: Verify unified import paths)
-    # ========================================================================
-    log("2/10", "Step 5/5: Validating installation and import consistency...")
-
-    # Verify PyTorch version consistency (subprocess vs runtime)
-    verify_consistency_cmd = (
-        'python -c "'
-        "import sys; "
-        "import torch; "
-        "import torchvision; "
-        "print(f'PyTorch: {torch.__version__}'); "
-        "print(f'TorchVision: {torchvision.__version__}'); "
-        "print(f'PyTorch Path: {torch.__file__}'); "
-        "print(f'TorchVision Path: {torchvision.__file__}')"
-        '"'
-    )
-    result = subprocess.run(
-        verify_consistency_cmd, shell=True, capture_output=True, text=True
-    )
-    if result.returncode != 0:
-        log("2/10", "❌ Failed to verify package consistency", "ERROR")
-        log("2/10", f"Error: {result.stderr}", "ERROR")
-        sys.exit(1)
-
-    for line in result.stdout.strip().splitlines():
-        log("2/10", f"  {line}")
-
-    # Verify torchvision.ops.nms exists (confirms C++ operator linkage)
-    verify_nms_cmd = (
-        'python -c "'
-        "from torchvision.ops import nms; "
-        "import torch; "
-        "boxes = torch.tensor([[0, 0, 10, 10], [5, 5, 15, 15]], dtype=torch.float32); "
-        "scores = torch.tensor([0.9, 0.8]); "
-        "result = nms(boxes, scores, 0.5); "
-        "print('✅ C++ operator torchvision::nms verified (runtime test passed)')"
-        '"'
-    )
-    result = subprocess.run(verify_nms_cmd, shell=True, capture_output=True, text=True)
-    if result.returncode != 0:
-        log("2/10", "❌ TorchVision C++ operator runtime test FAILED", "ERROR")
-        log("2/10", f"Error: {result.stderr}", "ERROR")
-        sys.exit(1)
-
-    log("2/10", f"  {result.stdout.strip()}")
-
-    # Check CUDA availability
-    verify_cuda_cmd = (
-        'python -c "import torch; '
-        "print(f'CUDA Available: {torch.cuda.is_available()}'); "
-        'print(f\'CUDA Version: {torch.version.cuda if torch.cuda.is_available() else "N/A"}\')"'
-    )
-    result = subprocess.run(verify_cuda_cmd, shell=True, capture_output=True, text=True)
-    if result.returncode != 0:
-        log("2/10", "Failed to verify CUDA", "ERROR")
-        sys.exit(1)
-
-    for line in result.stdout.strip().splitlines():
+    for line in result.stdout.strip().split("\n"):
         log("2/10", f"  ✅ {line}")
 
-    # Check for dependency conflicts
-    check_cmd = "python -m uv pip check"
-    result = subprocess.run(check_cmd, shell=True, capture_output=True, text=True)
-    if result.returncode != 0:
-        log("2/10", f"⚠️  Dependency conflicts detected:\n{result.stdout}", "WARN")
-    else:
-        log("2/10", "  ✅ No dependency conflicts")
+    log("2/10", "=" * 70)
+    log("2/10", "✅ Static Environment Ready")
+    log("2/10", "=" * 70)
+    log("2/10", "  📦 Pre-built environment extracted and validated")
+    log("2/10", "  🚀 No installation required")
+    log("2/10", "  ✅ 100% reproducible from uv.lock")
+    log("2/10", "=" * 70)
 
-    # ========================================================================
-    # COMPLETE - RESTART PYTHON TO APPLY CHANGES
-    # ========================================================================
-    log("2/10", "=" * 70)
-    log("2/10", "✅ Future-Proof Hybrid Installation Complete")
-    log("2/10", "=" * 70)
-    log("2/10", "  📦 Hardware Stack: Kaggle's PyTorch + CUDA (preserved)")
-    log("2/10", "  📦 Logic Stack: uv.lock dependencies (synced)")
-    log(
-        "2/10",
-        f"  📦 PyTorch Stack: {torch_version} + TorchVision {required_torchvision}.* (clean install)",
-    )
-    log("2/10", "  🔗 C++ Operator: torchvision::nms verified (runtime test passed)")
-    log("2/10", "  ✅ Import paths: Unified (no conflicts)")
-    log("2/10", "=" * 70)
-    
-    # ========================================================================
-    # CRITICAL: Restart Python to load fresh C extensions
-    # ========================================================================
-    log("2/10", "")
-    log("2/10", "=" * 70)
-    log("2/10", "🔄 Restarting Python to apply package changes...")
-    log("2/10", "=" * 70)
-    log("2/10", "⚠️  This is REQUIRED to clear import cache and load fresh C extensions")
-    log("2/10", "   (PyTorch/TorchVision C++ operators cannot be reloaded in same process)")
-    log("2/10", "")
-    log("2/10", "🔄 Restarting in 2 seconds...")
-    
-    import time
-    time.sleep(2)
-    
-    # Set flag to skip installation on restart
-    os.environ["DEPS_INSTALLED"] = "1"
-    
-    # Restart Python interpreter with same script and arguments
-    # os.execv replaces current process with new Python interpreter
-    # All arguments (sys.argv) are preserved
-    log("2/10", "🔄 Executing: python " + " ".join(sys.argv))
-    os.execv(sys.executable, [sys.executable] + sys.argv)
+    return venv_path
 
 
-def load_secrets():
+def load_secrets() -> Dict[str, Any]:
     """Load secrets from Kaggle dataset input JSON file.
 
     Searches for JSON file in CONFIG['secrets_path'] containing required
@@ -481,15 +324,21 @@ def load_secrets():
         log("0.5/10", "Secrets loaded successfully")
         return secrets
 
-    except json.JSONDecodeError as e:
-        log("0.5/10", f"Invalid JSON in secrets file: {e}", "ERROR")
+    except FileNotFoundError:
+        log("0.5/10", "Secrets file not found in Kaggle input", "ERROR")
         sys.exit(1)
-    except Exception as e:
-        log("0.5/10", f"Failed to load secrets: {e}", "ERROR")
+    except json.JSONDecodeError:
+        log("0.5/10", "Invalid JSON format in secrets file", "ERROR")
+        sys.exit(1)
+    except KeyError as e:
+        log("0.5/10", f"Missing required key in secrets: {e}", "ERROR")
+        sys.exit(1)
+    except Exception:
+        log("0.5/10", "Failed to load secrets (unknown error)", "ERROR")
         sys.exit(1)
 
 
-def configure_dvc(secrets):
+def configure_dvc(secrets: Dict[str, Any]) -> None:
     """Configure DVC with Google Drive credentials and verify remote access.
 
     Sets up DVC remote storage authentication using user-level credentials
@@ -579,7 +428,7 @@ def configure_dvc(secrets):
     log("3/10", "DVC configured with session token")
 
 
-def configure_git(secrets):
+def configure_git(secrets: Dict[str, Any]) -> None:
     """Configure Git credential helper with GitHub token for secure auth.
 
     Sets up Git authentication using credential helper pattern to avoid
@@ -660,7 +509,7 @@ def configure_git(secrets):
     log("4/10", "Git configured (token stored securely)")
 
 
-def configure_wandb(secrets):
+def configure_wandb(secrets: Dict[str, Any]) -> None:
     """Configure WandB authentication for experiment tracking.
 
     Args:
@@ -692,7 +541,7 @@ def configure_wandb(secrets):
         log("5/10", "WANDB_API_KEY not found, continuing without logging", "WARN")
 
 
-def fetch_dataset():
+def fetch_dataset() -> None:
     """Fetch dataset from DVC remote storage.
 
     Pulls processed localization dataset from Google Drive via DVC.
@@ -721,18 +570,23 @@ def fetch_dataset():
 
     # Pull base data dependencies (annotations) to satisfy DVC pipeline requirements
     # Note: We skip data/raw.dvc (large images) as we only need processed outputs
+    # L2: Use parallel pull with --jobs 4 to speed up downloads (2-3x faster)
     log("6/10", "Pulling base data dependencies (annotations)...")
     result = subprocess.run(
-        "dvc pull data/annotations.dvc", shell=True, capture_output=True, text=True
+        "dvc pull data/annotations.dvc --jobs 4",
+        shell=True,
+        capture_output=True,
+        text=True,
     )
     if result.returncode != 0:
         log("6/10", f"Warning: Could not pull annotations: {result.stderr}", "WARN")
 
     if not os.path.exists(f"{dataset_path}/images/train"):
         # Pull processed dataset directly (already prepared locally and pushed to DVC)
+        # L2: Use parallel pull with --jobs 4 for faster downloads
         log("6/10", "Pulling processed localization dataset from DVC...")
         result = subprocess.run(
-            "dvc pull convert_localization", shell=True, capture_output=False
+            "dvc pull convert_localization --jobs 4", shell=True, capture_output=False
         )
         if result.returncode != 0:
             log("6/10", "DVC pull failed", "ERROR")
@@ -741,7 +595,7 @@ def fetch_dataset():
     log("6/10", "Dataset ready")
 
 
-def display_config():
+def display_config() -> None:
     """Display training configuration summary from experiment YAML.
 
     Reads experiments/001_loc_baseline.yaml and prints key training parameters:
@@ -769,7 +623,7 @@ def display_config():
     print(f"  Keypoints: {config['keypoints']['kpt_shape']}")
 
 
-def download_pretrained_weights():
+def download_pretrained_weights() -> None:
     """Download and cache pretrained YOLOv11s-Pose weights.
 
     Downloads COCO-pretrained weights from Ultralytics hub to local cache.
@@ -796,13 +650,18 @@ def download_pretrained_weights():
     log("8/10", "Weights cached")
 
 
-def train_model():
-    """Execute training via standalone script (NOT DVC pipeline).
+def train_model(venv_path: Path, experiment_name: str) -> bool:
+    """Execute training via standalone script using pre-built environment.
 
-    Runs the localization training script directly as a subprocess.
-    Training is tracked by WandB but NOT executed via DVC pipeline.
+    Args:
+        venv_path: Path to extracted virtual environment
+        experiment_name: Name for this experiment run
+
+    Runs the localization training script using the Python interpreter
+    from the pre-built environment. Training is tracked by WandB.
 
     Architecture:
+        - Environment: Static (pre-built, uploaded as Kaggle Dataset)
         - Data Pipeline: DVC (split_data → convert_localization)
         - Training: Standalone script (tracked by WandB)
         - Model Versioning: Manual DVC add after training
@@ -818,6 +677,25 @@ def train_model():
     Estimated Time:
         2-3 hours on Kaggle T4 x2 GPU
     """
+    # M3: Validate virtual environment before training
+    log("9/10", "Validating virtual environment", "STEP")
+
+    python_bin = venv_path / "bin" / "python"
+    if not python_bin.exists():
+        log("ERROR", f"Python not found: {python_bin}", "ERROR")
+        sys.exit(1)
+
+    # Verify it's executable
+    result = subprocess.run(
+        [str(python_bin), "--version"], capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        log("ERROR", "Python binary is not executable", "ERROR")
+        sys.exit(1)
+
+    log("9/10", f"  Python: {result.stdout.strip()}")
+    log("9/10", "  Virtual environment validated")
+
     log("9/10", "Starting training", "STEP")
     print("=" * 70)
     print("⏱️  Training: ~2-3 hours")
@@ -825,6 +703,7 @@ def train_model():
     print("=" * 70)
     print("")
     print("💡 Architecture:")
+    print("   - Environment: Static (pre-built from uv.lock)")
     print("   - Data Pipeline: DVC (split_data → convert_localization)")
     print("   - Training: Standalone script (tracked by WandB)")
     print("   - Model Versioning: Automatic DVC add after training")
@@ -836,23 +715,30 @@ def train_model():
     print("=" * 70)
 
     project_root = os.getcwd()
-    sys.path.insert(0, project_root)
 
-    # Run training script directly
+    # Use Python from pre-built environment
+    python_bin = venv_path / "bin" / "python"
+
+    # Run training script with venv's Python
     log("9/10", "Executing standalone training script...")
+    log("9/10", f"Using Python: {python_bin}")
+
     cmd = (
-        f"python src/localization/train_and_evaluate.py "
+        f"{python_bin} src/localization/train_and_evaluate.py "
         f"--config experiments/001_loc_baseline.yaml "
-        f"--experiment {CONFIG['experiment_name']}"
+        f"--experiment {experiment_name}"
     )
 
-    result = subprocess.run(cmd, shell=True, capture_output=False)
+    result = subprocess.run(cmd, shell=True, capture_output=False, cwd=project_root)
     return result.returncode == 0
 
 
-def sync_outputs():
+def sync_outputs(experiment_name: str) -> None:
     """
     Sync trained models to DVC and GitHub (ATOMIC TRANSACTION)
+
+    Args:
+        experiment_name: Name of the experiment to sync outputs for
 
     Transaction guarantee:
     - BOTH DVC push AND Git push must succeed
@@ -869,8 +755,8 @@ def sync_outputs():
     """
     log("10/10", "Syncing outputs (atomic transaction)", "STEP")
 
-    # Use experiment name from CONFIG to locate outputs
-    experiment_path = Path(f"artifacts/localization/{CONFIG['experiment_name']}")
+    # Use experiment name parameter to locate outputs
+    experiment_path = Path(f"artifacts/localization/{experiment_name}")
     output_dirs = [
         experiment_path / "train",
         experiment_path / "test",
@@ -1157,7 +1043,27 @@ def sync_outputs():
 # ============================================================================
 
 
-def main():
+def main() -> None:
+    """Main training pipeline orchestrator for Kaggle execution.
+
+    Executes the complete training pipeline with the following steps:
+        1. Verify GPU availability
+        2. Load secrets from Kaggle dataset input
+        3. Clone repository
+        4. Extract pre-built environment
+        5. Configure DVC, Git, and WandB
+        6. Fetch dataset
+        7. Display configuration
+        8. Download pretrained weights
+        9. Train model
+        10. Sync outputs to DVC and GitHub
+
+    The experiment name is loaded from the configuration file to avoid
+    hardcoding in the script.
+
+    Raises:
+        SystemExit: If any critical step fails
+    """
     """Execute training pipeline with full orchestration.
 
     Orchestrates the complete training pipeline from environment setup
@@ -1167,14 +1073,14 @@ def main():
         1. Load secrets from Kaggle dataset input
         2. Verify GPU availability
         3. Clone GitHub repository
-        4. Install dependencies (Hybrid Environment Strategy)
+        4. Extract pre-built environment from Kaggle Dataset (Static Strategy)
         5. Configure DVC (Google Drive credentials)
         6. Configure Git (credential helper for secure push)
         7. Configure WandB (experiment tracking)
         8. Fetch dataset from DVC
         9. Display training configuration
         10. Download pretrained YOLO weights
-        11. Execute training
+        11. Execute training using pre-built environment
         12. Sync outputs to DVC + GitHub (atomic transaction)
 
     Error Handling:
@@ -1191,6 +1097,7 @@ def main():
     """
     print("=" * 70)
     print(" CONTAINER ID LOCALIZATION TRAINING - YOLOv11s-Pose")
+    print(" (Static Environment Strategy)")
     print("=" * 70)
 
     try:
@@ -1199,21 +1106,36 @@ def main():
 
         verify_gpu()
         clone_repository()
-        install_dependencies()
+        venv_path = extract_and_activate_environment()  # New: Extract pre-built env
         configure_dvc(secrets)
         configure_git(secrets)
         configure_wandb(secrets)
         fetch_dataset()
+
+        # Load experiment name from config file (H3: No hardcoding)
+        import yaml
+
+        with open("experiments/001_loc_baseline.yaml", "r") as f:
+            config = yaml.safe_load(f)
+
+        # Extract experiment name from config or use default
+        experiment_name = config.get("experiment", {}).get(
+            "name", "localization_exp001_yolo11s_pose_baseline"
+        )
+        log("INFO", f"Experiment: {experiment_name}")
+
         display_config()
         download_pretrained_weights()
 
-        success = train_model()
+        success = train_model(
+            venv_path, experiment_name
+        )  # Pass venv_path and experiment_name
 
         if success:
             print("\n" + "=" * 70)
             print(" ✅ TRAINING COMPLETE!")
             print("=" * 70)
-            sync_outputs()
+            sync_outputs(experiment_name)
 
             print("\n" + "=" * 70)
             print("Next steps:")

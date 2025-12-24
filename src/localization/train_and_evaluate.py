@@ -379,9 +379,9 @@ def train_localization_model(
     logger.info("=" * 60)
     logger.info("Container ID Localization Training (Module 3)")
     logger.info("=" * 60)
-    logger.info(f"Start time: {datetime.now().isoformat()}")
-    logger.info(f"Configuration: {config_path}")
-    logger.info(f"Dataset: {data_yaml} (absolute: {data_yaml_abs})")
+    logger.debug(f"Start time: {datetime.now().isoformat()}")
+    logger.debug(f"Configuration: {config_path}")
+    logger.debug(f"Dataset: {data_yaml} (absolute: {data_yaml_abs})")
 
     # Check ultralytics is installed
     try:
@@ -394,14 +394,14 @@ def train_localization_model(
     logger.info("Loading configuration...")
     config = load_config(config_path)
     model_name = config["model"]["architecture"]
-    logger.info(f"Model architecture: {model_name}")
+    logger.debug(f"Model architecture: {model_name}")
 
     # Initialize WandB BEFORE model initialization
     logger.info("Initializing experiment tracking...")
     initialize_wandb(config, experiment_name)
 
     # Initialize model
-    logger.info("Initializing model...")
+    logger.debug("Initializing model...")
 
     # Check if resuming from checkpoint
     resume_from = config["model"].get("resume_from")
@@ -414,7 +414,7 @@ def train_localization_model(
             raise FileNotFoundError(f"Checkpoint not found: {resume_from}")
 
         logger.info(f"📂 RESUME MODE: Loading checkpoint from {resume_from}")
-        logger.info("   This will continue training from the saved state.")
+        logger.debug("   This will continue training from the saved state.")
         try:
             model = YOLO(str(resume_path))
             logger.info(f"✓ Checkpoint loaded successfully")
@@ -431,16 +431,16 @@ def train_localization_model(
             logger.info(f"✓ Model loaded successfully: {model_name}.pt")
         except Exception as e:
             logger.error(f"Failed to load model: {e}")
-            logger.info("Possible causes:")
-            logger.info("  1. Network connection issue preventing download")
-            logger.info(
+            logger.error("Possible causes:")
+            logger.error("  1. Network connection issue preventing download")
+            logger.error(
                 "  2. Invalid model name (available: yolo11n-pose, yolo11s-pose, yolo11m-pose, yolo11l-pose, yolo11x-pose)"
             )
-            logger.info("  3. Corrupted cache (~/.cache/ultralytics)")
+            logger.error("  3. Corrupted cache (~/.cache/ultralytics)")
             raise
 
     # Prepare training arguments
-    logger.info("Preparing training configuration...")
+    logger.debug("Preparing training configuration...")
     train_args = prepare_training_args(
         config, data_yaml_abs, experiment_name, config_path
     )
@@ -448,11 +448,11 @@ def train_localization_model(
     # Ensure output directory exists
     output_dir = Path(train_args["project"]) / train_args["name"]
     output_dir.mkdir(parents=True, exist_ok=True)
-    logger.info(f"Output directory: {output_dir.absolute()}")
+    logger.debug(f"Output directory: {output_dir.absolute()}")
 
     logger.info(f"Training for {train_args['epochs']} epochs")
-    logger.info(f"Batch size: {train_args['batch']}")
-    logger.info(f"Learning rate: {train_args['lr0']}")
+    logger.debug(f"Batch size: {train_args['batch']}")
+    logger.debug(f"Learning rate: {train_args['lr0']}")
     # NOTE: kpt_shape is in data.yaml, not in train_args
 
     # Train
@@ -473,7 +473,7 @@ def train_localization_model(
 
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-            logger.info("GPU cache cleared after training")
+            logger.debug("GPU cache cleared after training")
     except ImportError:
         pass
 
@@ -512,7 +512,7 @@ def train_localization_model(
                 ),
             }
         )
-        logger.info(
+        logger.debug(
             f"Validation mAP@50: {final_metrics.get('val/mAP50_final', 0.0):.4f}"
         )
     else:
@@ -556,7 +556,7 @@ def train_localization_model(
                 ),
             }
         )
-        logger.info(f"Test mAP@50: {final_metrics.get('test/mAP50', 0.0):.4f}")
+        logger.debug(f"Test mAP@50: {final_metrics.get('test/mAP50', 0.0):.4f}")
     else:
         logger.warning("Test metrics object is None or missing pose metrics")
         final_metrics.update(
@@ -574,7 +574,7 @@ def train_localization_model(
         if wandb.run:
             wandb.log(final_metrics)
             wandb.finish()
-            logger.info("WandB run finished")
+            logger.debug("WandB run finished")
     except (ImportError, AttributeError):
         pass
 
