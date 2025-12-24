@@ -173,20 +173,30 @@ def prepare_training_args(
         config_path: Path to config file (needed to load hardware settings)
 
     Returns:
-        Dictionary of training arguments (EXCLUDES wandb config)
+        Dictionary of training arguments (INCLUDES wandb config via project/name)
     """
     model_cfg = config.get("model", {})
     train_cfg = config.get("training", {})
     aug_cfg = config.get("augmentation", {})
     kpt_cfg = config.get("keypoints", {})
+    wandb_cfg = config.get("wandb", {})
 
-    # Force output to artifacts/localization/[experiment_name]/train/
-    project_name = (
+    # CRITICAL: In Ultralytics, 'project' and 'name' args control BOTH:
+    # 1. Local output directory: artifacts/localization/[experiment_name]/train/
+    # 2. WandB project name: Uses os.path.basename(project) for WandB
+    #
+    # To separate local vs WandB paths, we use environment variables:
+    # - WANDB_PROJECT: Override WandB project name (from config)
+    # - Local project: Full path for local storage
+    local_project_path = (
         f"artifacts/localization/{experiment_name}"
         if experiment_name
         else "artifacts/localization/default"
     )
-    run_name = "train"
+
+    # WandB will use WANDB_PROJECT env var if set (already configured in train_localization_model)
+    # This prevents Ultralytics from using local path as WandB project name
+    run_name = experiment_name if experiment_name else "train"
 
     # Load hardware configuration from the SAME config file
     hardware_cfg = {}
@@ -336,7 +346,7 @@ def prepare_training_args(
         # They are dataset metadata that must be in data.yaml (already configured there)
         # Passing them to model.train() causes: "kpt_shape is not a valid YOLO argument"
         # Output
-        "project": project_name,
+        "project": local_project_path,
         "name": run_name,
         "exist_ok": True,
         "save": True,  # Save checkpoints (best.pt + last.pt saved automatically)
