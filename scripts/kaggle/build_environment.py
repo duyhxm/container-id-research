@@ -255,7 +255,17 @@ def pack_environment(repo_path, venv_path):
     """Pack virtual environment into tarball."""
     log("Step 7/7: Packing environment...", "STEP")
 
-    output_file = Path.cwd() / CONFIG["output_archive"]
+    # Determine output directory (Kaggle-aware)
+    # On Kaggle: Use /kaggle/working/ (persistent, appears in Output tab)
+    # Locally: Use current directory
+    if Path("/kaggle/working").exists():
+        output_dir = Path("/kaggle/working")
+        log("  Detected Kaggle environment - saving to /kaggle/working/")
+    else:
+        output_dir = Path.cwd()
+        log(f"  Saving to current directory: {output_dir}")
+
+    output_file = output_dir / CONFIG["output_archive"]
     if output_file.exists():
         output_file.unlink()
 
