@@ -585,6 +585,27 @@ def configure_wandb(secrets: Dict[str, Any]) -> None:
             check=False,
         )
         log("5/10", "WandB authenticated")
+
+        # CRITICAL: Enable WandB logging in Ultralytics settings
+        # By default, WandB logging is DISABLED in Ultralytics YOLO
+        # This must be enabled BEFORE training for automatic integration
+        log("5/10", "Enabling WandB logging in Ultralytics settings...")
+        result = subprocess.run(
+            "yolo settings wandb=True",
+            shell=True,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode == 0:
+            log("5/10", "✓ WandB logging enabled in Ultralytics")
+        else:
+            log(
+                "5/10",
+                f"Warning: Could not enable WandB settings: {result.stderr}",
+                "WARN",
+            )
+
     except Exception as e:
         log("5/10", "WANDB_API_KEY not found, continuing without logging", "WARN")
 

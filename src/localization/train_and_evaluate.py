@@ -344,6 +344,7 @@ def prepare_training_args(
         "save_json": True,
         # NOTE: Do NOT pass 'wandb' parameter here
         # Ultralytics auto-detects initialized WandB session via wandb.run
+        # WandB project/name are controlled via WANDB_PROJECT and WANDB_NAME env vars
     }
 
     return args
@@ -400,6 +401,43 @@ def train_localization_model(
     # Manually calling initialize_wandb() causes conflicts and single-point plots
     # logger.info("Initializing experiment tracking...")
     # initialize_wandb(config, experiment_name)
+
+    # CRITICAL: Ensure WandB logging is enabled in Ultralytics settings
+    # By default, WandB logging is DISABLED. We must enable it for automatic integration.
+    logger.info("Configuring experiment tracking...")
+
+    # Set WandB environment variables from config
+    wandb_cfg = config.get("wandb", {})
+    if wandb_cfg:
+        import os
+
+        # Set WandB project name (separate from local output directory)
+        os.environ["WANDB_PROJECT"] = wandb_cfg.get("project", "container-id-research")
+        # Set experiment name for WandB run
+        if experiment_name:
+            os.environ["WANDB_NAME"] = experiment_name
+        elif wandb_cfg.get("name"):
+            os.environ["WANDB_NAME"] = wandb_cfg.get("name")
+        logger.info(f"WandB project: {os.environ.get('WANDB_PROJECT')}")
+        logger.info(f"WandB run name: {os.environ.get('WANDB_NAME', 'auto-generated')}")
+
+    try:
+        import subprocess
+
+        result = subprocess.run(
+            ["yolo", "settings", "wandb=True"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode == 0:
+            logger.info("✓ WandB logging enabled in Ultralytics settings")
+        else:
+            logger.warning(f"Could not enable WandB settings: {result.stderr}")
+            logger.warning("Training will proceed, but WandB logging may not work")
+    except Exception as e:
+        logger.warning(f"Failed to configure WandB settings: {e}")
+        logger.warning("Training will proceed, but WandB logging may not work")
 
     # Initialize model
     logger.debug("Initializing model...")
