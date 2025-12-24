@@ -396,9 +396,10 @@ def train_localization_model(
     model_name = config["model"]["architecture"]
     logger.debug(f"Model architecture: {model_name}")
 
-    # Initialize WandB BEFORE model initialization
-    logger.info("Initializing experiment tracking...")
-    initialize_wandb(config, experiment_name)
+    # NOTE: WandB initialization is handled automatically by Ultralytics
+    # Manually calling initialize_wandb() causes conflicts and single-point plots
+    # logger.info("Initializing experiment tracking...")
+    # initialize_wandb(config, experiment_name)
 
     # Initialize model
     logger.debug("Initializing model...")
@@ -457,6 +458,7 @@ def train_localization_model(
 
     # Train
     logger.info("Starting training...")
+    logger.info("Note: WandB logging will be automatically initialized by Ultralytics")
     logger.info("-" * 60)
 
     start_time = datetime.now()
