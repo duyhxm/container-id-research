@@ -37,8 +37,9 @@ localization:
     # ⭐ Explicit Loss Weights (YOLO Pose)
     box: 7.5      # Bounding box IoU loss weight (YOLO default)
     cls: 0.5      # Classification loss weight (YOLO default)
-    pose: 3.0     # ⭐ Keypoint pose loss weight (increased from ~1.0 default)
+    pose: 15.0    # ⭐ Keypoint pose loss weight (increased from 12.0 default to prioritize keypoint accuracy)
     dfl: 1.5      # Distribution Focal Loss weight (YOLO default)
+    kobj: 1.0     # Keypoint objectness loss weight (YOLO default)
     
   # Augmentation (YOLO built-in)
   augmentation:
@@ -80,7 +81,7 @@ localization:
     
   # Experiment tracking
   wandb:
-    project: container-id-research
+    project: container-id-localization
     tags:
       - module-3
       - localization
@@ -89,7 +90,7 @@ localization:
       - high-pose-weight
       - perspective-aug
     notes: |
-      Improved training with increased pose loss weight (3.0x) and perspective augmentation.
+      Improved training with increased pose loss weight (15.0, +25% from 12.0 default) and perspective augmentation.
       Goal: Reduce MDE from 14.92px to <10px, improve IoU from 0.647 to >0.75.
       Target: Fix Keypoint 3 (Bottom-Left) imbalance (23.50px → <15px).
 

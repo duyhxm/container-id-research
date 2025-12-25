@@ -2,34 +2,25 @@
 Training Script for Container ID Localization (Module 3)
 
 Trains YOLOv11-Pose model for 4-point keypoint detection with:
-- WandB experiment tracking
+- WandB experiment tracking (manual initialization)
 - Configuration from experiment config file
 - Early stopping
 - Checkpoint management
 - Pose-specific metrics (OKS, mAP)
 """
 
-# Standard library imports
 import argparse
+import json
 import logging
 import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-# Third-party imports
 import yaml
 
-# Local imports
 from src.utils.logging_config import setup_logging
 
-# CRITICAL: Set WandB environment variables BEFORE any other imports
-# Ultralytics will use training args (project/name) for WandB if not set here
-# Must be set at module level to ensure it's available before model.train() call
-# This will be properly configured in train_localization_model() after loading config
-os.environ.setdefault("WANDB_PROJECT", "container-id-research")
-
-# Required configuration keys for validation
 REQUIRED_CONFIG_KEYS = [
     "model.architecture",
     "training.epochs",
@@ -41,8 +32,7 @@ REQUIRED_CONFIG_KEYS = [
 
 
 def _validate_config(config: Dict[str, Any]) -> None:
-    """
-    Validate configuration structure and types.
+    """Validate configuration structure and types.
 
     Args:
         config: Configuration dictionary to validate
@@ -51,39 +41,30 @@ def _validate_config(config: Dict[str, Any]) -> None:
         ValueError: If required keys are missing or values are invalid
         TypeError: If values have incorrect types
     """
-    # Check required keys exist
     for key_path in REQUIRED_CONFIG_KEYS:
         keys = key_path.split(".")
-        value = config
+        val = config
         for key in keys:
-            if key not in value:
+            if key not in val:
                 raise ValueError(f"Missing required config key: {key_path}")
-            value = value[key]
+            val = val[key]
 
-    # Type validation
     if not isinstance(config["training"]["epochs"], int):
-        raise TypeError("training.epochs must be integer")
-
+        raise TypeError("training.epochs must be an integer")
     if not isinstance(config["training"]["batch_size"], int):
-        raise TypeError("training.batch_size must be integer")
-
+        raise TypeError("training.batch_size must be an integer")
     if config["training"]["batch_size"] < 1:
-        raise ValueError("training.batch_size must be >= 1")
-
+        raise ValueError("training.batch_size must be positive")
     if not isinstance(config["keypoints"]["kpt_shape"], list):
-        raise TypeError("keypoints.kpt_shape must be list")
-
+        raise TypeError("keypoints.kpt_shape must be a list")
     if len(config["keypoints"]["kpt_shape"]) != 2:
         raise ValueError("keypoints.kpt_shape must be [num_keypoints, num_coords]")
-
-    # Validate optimizer is a string
     if not isinstance(config["training"]["optimizer"], str):
-        raise TypeError("training.optimizer must be string")
+        raise TypeError("training.optimizer must be a string")
 
 
 def load_config(config_path: Path) -> Dict[str, Any]:
-    """
-    Load training configuration from YAML file.
+    """Load and validate training configuration from YAML file.
 
     Args:
         config_path: Path to configuration file
@@ -94,28 +75,23 @@ def load_config(config_path: Path) -> Dict[str, Any]:
     Raises:
         FileNotFoundError: If config file doesn't exist
         ValueError: If localization section missing or validation fails
-        TypeError: If configuration values have incorrect types
     """
     if not config_path.exists():
         raise FileNotFoundError(f"Configuration file not found: {config_path}")
 
-    with open(config_path, "r") as f:
+    with open(config_path, "r", encoding="utf-8") as f:
         params = yaml.safe_load(f)
 
     if "localization" not in params:
         raise ValueError("Configuration must contain 'localization' section")
 
     config = params["localization"]
-
-    # Validate configuration structure and types
     _validate_config(config)
-
     return config
 
 
 def initialize_wandb(config: Dict[str, Any], experiment_name: Optional[str]) -> None:
-    """
-    Initialize Weights & Biases experiment tracking.
+    """Initialize Weights & Biases experiment tracking with proper project naming.
 
     Args:
         config: Localization configuration dictionary
@@ -124,20 +100,18 @@ def initialize_wandb(config: Dict[str, Any], experiment_name: Optional[str]) -> 
     try:
         import wandb
     except ImportError:
-        logging.warning("wandb not installed, skipping experiment tracking")
+        logging.warning("WandB not installed. Skipping experiment tracking.")
         return
 
-    # Check if WandB run is already active (e.g., from parent process)
     if wandb.run is not None:
         logging.info(f"WandB run already active: {wandb.run.name}")
-        logging.info(f"Finishing existing run before re-initialization")
-        wandb.finish()  # Properly close existing run before creating new one
+        return
 
     wandb_config = config.get("wandb", {})
 
     wandb.init(
-        project=wandb_config.get("project", "container-id-research"),
-        entity=wandb_config.get("entity"),  # None = use logged-in user
+        project=wandb_config.get("project", "container-id-localization"),
+        entity=wandb_config.get("entity"),
         name=experiment_name or wandb_config.get("name"),
         config={
             "model": config.get("model", {}),
@@ -163,43 +137,29 @@ def prepare_training_args(
     experiment_name: Optional[str] = None,
     config_path: Optional[Path] = None,
 ) -> Dict[str, Any]:
-    """
-    Prepare training arguments for Ultralytics YOLO.train().
+    """Prepare training arguments for Ultralytics YOLO.train().
 
     Args:
         config: Localization configuration
-        data_yaml_abs: Absolute path to data.yaml file (already converted)
-        experiment_name: Name for this experiment run (used for output directory)
-        config_path: Path to config file (needed to load hardware settings)
+        data_yaml_abs: Absolute path to data.yaml file
+        experiment_name: Name for this experiment run
+        config_path: Path to config file for hardware settings
 
     Returns:
-        Dictionary of training arguments (INCLUDES wandb config via project/name)
+        Dictionary of training arguments for model.train()
     """
     model_cfg = config.get("model", {})
     train_cfg = config.get("training", {})
     aug_cfg = config.get("augmentation", {})
     kpt_cfg = config.get("keypoints", {})
-    wandb_cfg = config.get("wandb", {})
 
-    # CRITICAL: In Ultralytics, 'project' and 'name' args control BOTH:
-    # 1. Local output directory: artifacts/localization/[experiment_name]/train/
-    # 2. WandB project name: Uses os.path.basename(project) for WandB
-    #
-    # To separate local vs WandB paths, we use environment variables:
-    # - WANDB_PROJECT: Override WandB project name (from config)
-    # - Local project: Full path for local storage
     local_project_path = (
         f"artifacts/localization/{experiment_name}"
         if experiment_name
         else "artifacts/localization/default"
     )
-
-    # WandB will use WANDB_PROJECT env var if set (already configured in train_localization_model)
-    # This prevents Ultralytics from using local path as WandB project name
-    # run_name is the subfolder inside project (typically "train" for training runs)
     run_name = "train"
 
-    # Load hardware configuration from the SAME config file
     hardware_cfg = {}
     if config_path and config_path.exists():
         try:
@@ -209,127 +169,62 @@ def prepare_training_args(
         except Exception:
             hardware_cfg = {}
 
-    # GPU Configuration: Auto-detect available GPUs and configure device
     try:
         import torch
 
         if not torch.cuda.is_available():
-            raise RuntimeError(
-                "No GPU detected! This training script requires CUDA-enabled GPU.\n"
-                "Possible solutions:\n"
-                "  1. Check NVIDIA driver installation: nvidia-smi\n"
-                "  2. Verify PyTorch CUDA installation: python -c 'import torch; print(torch.cuda.is_available())'\n"
-                "  3. Install PyTorch with CUDA: pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118"
-            )
-
-        gpu_count = torch.cuda.device_count()
-        multi_gpu_enabled = hardware_cfg.get("multi_gpu", False)
-
-        if gpu_count == 0:
-            raise RuntimeError(
-                "torch.cuda.is_available() is True but device_count() is 0"
-            )
-
-        elif gpu_count == 1:
-            # Single GPU available
-            device = 0
-            logging.info("=" * 70)
-            logging.info("🎯 GPU Configuration: SINGLE GPU MODE")
-            logging.info("=" * 70)
-            logging.info(f"GPU Detected: {torch.cuda.get_device_name(0)}")
-            logging.info(
-                f"VRAM: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.2f} GB"
-            )
-            logging.info("Status: Training will use GPU 0")
-            if multi_gpu_enabled:
-                logging.info("Note: multi_gpu=True in config, but only 1 GPU available")
-            logging.info("=" * 70)
-            logging.info("")
-
+            device = "cpu"
+            logging.warning("CUDA not available. Training on CPU.")
         else:
-            # Multiple GPUs available
-            if multi_gpu_enabled:
-                # Validate GPU availability and build device list dynamically
+            gpu_count = torch.cuda.device_count()
+            multi_gpu_enabled = hardware_cfg.get("multi_gpu", False)
+
+            if gpu_count == 1:
+                device = 0
+                logging.info(f"Single GPU: {torch.cuda.get_device_name(0)}")
+            elif multi_gpu_enabled and gpu_count > 1:
                 available_gpus = []
                 for i in range(gpu_count):
                     try:
-                        # Verify GPU is accessible
                         torch.cuda.get_device_properties(i)
                         available_gpus.append(i)
                     except RuntimeError as e:
                         logging.warning(f"GPU {i} not accessible: {e}")
 
-                if not available_gpus:
-                    logging.warning("No GPUs accessible, falling back to GPU 0")
-                    device = 0
-                elif len(available_gpus) == 1:
-                    logging.info("Only 1 GPU accessible, using single-GPU mode")
-                    device = available_gpus[0]
-                else:
-                    # Use all available GPUs dynamically
+                if len(available_gpus) > 1:
                     device = available_gpus
-                    logging.info("=" * 70)
-                    logging.info("🚀 GPU Configuration: MULTI-GPU MODE")
-                    logging.info("=" * 70)
-                    logging.info(f"GPUs Detected: {gpu_count}")
-                    logging.info(f"GPUs Accessible: {len(available_gpus)}")
-                    for i in available_gpus:
-                        logging.info(f"  GPU {i}: {torch.cuda.get_device_name(i)}")
-                        logging.info(
-                            f"    VRAM: {torch.cuda.get_device_properties(i).total_memory / 1024**3:.2f} GB"
-                        )
-                    logging.info(f"Status: Training will use GPUs {device}")
-                    logging.info("Note: Distributed Data Parallel (DDP) will be used")
-                    logging.info("=" * 70)
-                    logging.info("")
+                    logging.info(f"Multi-GPU mode: {len(available_gpus)} GPUs")
+                else:
+                    device = available_gpus[0] if available_gpus else 0
+                    logging.info("Single GPU mode")
             else:
-                # Multi-GPU available but not enabled in config
                 device = 0
-                logging.info("=" * 70)
-                logging.info(
-                    "🎯 GPU Configuration: SINGLE GPU MODE (Multi-GPU Available)"
-                )
-                logging.info("=" * 70)
-                logging.info(f"GPUs Detected: {gpu_count}")
-                for i in range(gpu_count):
-                    logging.info(f"  GPU {i}: {torch.cuda.get_device_name(i)}")
-                logging.info(f"Status: Training will use GPU 0 only")
-                logging.info("Reason: multi_gpu=False in config")
-                logging.info(
-                    f"Performance: Consider enabling multi_gpu=True for ~{gpu_count}x speedup"
-                )
-                logging.info("=" * 70)
-                logging.info("")
+                logging.info(f"Single GPU mode: {torch.cuda.get_device_name(0)}")
+                if gpu_count > 1:
+                    logging.info(
+                        f"Note: {gpu_count} GPUs available, set multi_gpu=true to use all"
+                    )
 
     except ImportError:
-        raise ImportError(
-            "PyTorch not installed. Install with: pip install torch torchvision"
-        )
+        raise ImportError("PyTorch not installed. Run: pip install torch torchvision")
 
     args = {
-        # Data
-        "data": data_yaml_abs,  # Use absolute path
-        # Task-specific (Pose Estimation)
+        "data": data_yaml_abs,
         "task": "pose",
-        # Training
         "epochs": train_cfg.get("epochs", 100),
         "batch": train_cfg.get("batch_size", 16),
         "imgsz": 640,
-        "device": device,  # Dynamic device configuration
-        # Optimizer
+        "device": device,
         "optimizer": train_cfg.get("optimizer", "AdamW"),
         "lr0": train_cfg.get("learning_rate", 0.001),
-        "lrf": 0.01,  # Final learning rate = lr0 * lrf
+        "lrf": 0.01,
         "momentum": 0.937,
         "weight_decay": train_cfg.get("weight_decay", 0.0005),
-        # Scheduler
         "warmup_epochs": train_cfg.get("warmup_epochs", 3),
         "warmup_momentum": 0.8,
         "warmup_bias_lr": 0.1,
         "cos_lr": (train_cfg.get("lr_scheduler") == "cosine"),
-        # Early stopping
         "patience": train_cfg.get("patience", 20),
-        # Augmentation
         "hsv_h": aug_cfg.get("hsv_h", 0.01),
         "hsv_s": aug_cfg.get("hsv_s", 0.4),
         "hsv_v": aug_cfg.get("hsv_v", 0.3),
@@ -343,26 +238,22 @@ def prepare_training_args(
         "mosaic": aug_cfg.get("mosaic", 0.0),
         "mixup": aug_cfg.get("mixup", 0.0),
         "copy_paste": aug_cfg.get("copy_paste", 0.0),
-        # NOTE: kpt_shape and flip_idx are NOT training arguments
-        # They are dataset metadata that must be in data.yaml (already configured there)
-        # Passing them to model.train() causes: "kpt_shape is not a valid YOLO argument"
-        # Output
+        "box": train_cfg.get("box", 7.5),
+        "cls": train_cfg.get("cls", 0.5),
+        "dfl": train_cfg.get("dfl", 1.5),
+        "pose": train_cfg.get("pose", 12.0),
+        "kobj": train_cfg.get("kobj", 1.0),
         "project": local_project_path,
         "name": run_name,
         "exist_ok": True,
-        "save": True,  # Save checkpoints (best.pt + last.pt saved automatically)
-        "save_period": -1,  # Only save final epoch (disable periodic saves)
+        "save": True,
+        "save_period": -1,
         "plots": True,
         "verbose": True,
-        # Performance (dynamically configured)
         "workers": hardware_cfg.get("num_workers", 4),
-        "amp": hardware_cfg.get("mixed_precision", True),  # Automatic Mixed Precision
-        # Validation
+        "amp": hardware_cfg.get("mixed_precision", True),
         "val": True,
         "save_json": True,
-        # NOTE: Do NOT pass 'wandb' parameter here
-        # Ultralytics auto-detects initialized WandB session via wandb.run
-        # WandB project/name are controlled via WANDB_PROJECT and WANDB_NAME env vars
     }
 
     return args
@@ -373,12 +264,11 @@ def train_localization_model(
     experiment_name: Optional[str] = None,
     data_yaml: Path = Path("data/processed/localization/data.yaml"),
 ) -> Dict[str, Any]:
-    """
-    Train YOLOv11-Pose localization model.
+    """Train YOLOv11-Pose localization model with manual WandB initialization.
 
     Args:
         config_path: Path to configuration file
-        experiment_name: Name for experiment (uses config default if None)
+        experiment_name: Name for experiment run
         data_yaml: Path to dataset configuration file
 
     Returns:
@@ -388,11 +278,8 @@ def train_localization_model(
         ImportError: If ultralytics not installed
         FileNotFoundError: If config or data files not found
     """
-    # Setup
     setup_logging()
     logger = logging.getLogger(__name__)
-
-    # Convert data_yaml to absolute path early (resolve() handles relative paths)
     data_yaml_abs = str(data_yaml.resolve())
 
     logger.info("=" * 60)
@@ -400,123 +287,53 @@ def train_localization_model(
     logger.info("=" * 60)
     logger.debug(f"Start time: {datetime.now().isoformat()}")
     logger.debug(f"Configuration: {config_path}")
-    logger.debug(f"Dataset: {data_yaml} (absolute: {data_yaml_abs})")
+    logger.debug(f"Dataset: {data_yaml_abs}")
 
-    # Check ultralytics is installed
     try:
         from ultralytics import YOLO
     except ImportError:
-        logger.error("ultralytics not installed. Install with: pip install ultralytics")
+        logger.error("Ultralytics not installed. Run: pip install ultralytics")
         raise
 
-    # Load configuration
     logger.info("Loading configuration...")
     config = load_config(config_path)
     model_name = config["model"]["architecture"]
     logger.debug(f"Model architecture: {model_name}")
 
-    # NOTE: WandB initialization is handled automatically by Ultralytics
-    # Manually calling initialize_wandb() causes conflicts and single-point plots
-    # logger.info("Initializing experiment tracking...")
-    # initialize_wandb(config, experiment_name)
+    logger.info("Initializing experiment tracking...")
+    initialize_wandb(config, experiment_name)
 
-    # CRITICAL: Configure WandB environment variables from config
-    # This prevents Ultralytics from using local output directory as WandB project name
-    wandb_cfg = config.get("wandb", {})
-
-    # Override WANDB_PROJECT with value from config (or keep default)
-    # Ultralytics defaults to using 'project' argument (local dir) as WandB project if not set
-    os.environ["WANDB_PROJECT"] = wandb_cfg.get("project", "container-id-research")
-
-    # Set experiment name for WandB run (optional)
-    if experiment_name:
-        os.environ["WANDB_NAME"] = experiment_name
-    elif wandb_cfg.get("name"):
-        os.environ["WANDB_NAME"] = wandb_cfg.get("name")
-
-    logger.info(f"WandB project: {os.environ.get('WANDB_PROJECT')}")
-    logger.info(f"WandB run name: {os.environ.get('WANDB_NAME', 'auto-generated')}")
-
-    # CRITICAL: Ensure WandB logging is enabled in Ultralytics settings
-    # By default, WandB logging is DISABLED. We must enable it for automatic integration.
-    logger.info("Configuring experiment tracking...")
-
+    logger.info("Configuring Ultralytics settings...")
     try:
-        import subprocess
+        from ultralytics import settings
 
-        result = subprocess.run(
-            ["yolo", "settings", "wandb=True"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if result.returncode == 0:
-            logger.info("✓ WandB logging enabled in Ultralytics settings")
-        else:
-            logger.warning(f"Could not enable WandB settings: {result.stderr}")
-            logger.warning("Training will proceed, but WandB logging may not work")
+        settings.update({"wandb": True})
+        logger.info("WandB logging enabled in Ultralytics")
     except Exception as e:
-        logger.warning(f"Failed to configure WandB settings: {e}")
-        logger.warning("Training will proceed, but WandB logging may not work")
+        logger.warning(f"Could not configure Ultralytics settings: {e}")
 
-    # Initialize model
     logger.debug("Initializing model...")
-
-    # Check if resuming from checkpoint
     resume_from = config["model"].get("resume_from")
 
     if resume_from:
-        # Resume training from checkpoint
-        resume_path = Path(resume_from)
-        if not resume_path.exists():
-            logger.error(f"Resume checkpoint not found: {resume_from}")
-            raise FileNotFoundError(f"Checkpoint not found: {resume_from}")
-
-        logger.info(f"📂 RESUME MODE: Loading checkpoint from {resume_from}")
-        logger.debug("   This will continue training from the saved state.")
-        try:
-            model = YOLO(str(resume_path))
-            logger.info(f"✓ Checkpoint loaded successfully")
-        except Exception as e:
-            logger.error(f"Failed to load checkpoint: {e}")
-            raise
+        logger.info(f"Resuming from checkpoint: {resume_from}")
+        model = YOLO(resume_from)
     else:
-        # Train from scratch with pretrained weights
-        logger.info(
-            f"🆕 FRESH TRAINING: Loading {model_name}.pt (pretrained weights will auto-download if needed)..."
-        )
-        try:
-            model = YOLO(f"{model_name}.pt")
-            logger.info(f"✓ Model loaded successfully: {model_name}.pt")
-        except Exception as e:
-            logger.error(f"Failed to load model: {e}")
-            logger.error("Possible causes:")
-            logger.error("  1. Network connection issue preventing download")
-            logger.error(
-                "  2. Invalid model name (available: yolo11n-pose, yolo11s-pose, yolo11m-pose, yolo11l-pose, yolo11x-pose)"
-            )
-            logger.error("  3. Corrupted cache (~/.cache/ultralytics)")
-            raise
+        logger.info("Starting from pretrained weights")
+        model = YOLO(f"{model_name}.pt")
+        logger.info(f"Loaded pretrained model: {model_name}.pt")
 
-    # Prepare training arguments
     logger.debug("Preparing training configuration...")
     train_args = prepare_training_args(
         config, data_yaml_abs, experiment_name, config_path
     )
 
-    # Ensure output directory exists
     output_dir = Path(train_args["project"]) / train_args["name"]
     output_dir.mkdir(parents=True, exist_ok=True)
     logger.debug(f"Output directory: {output_dir.absolute()}")
 
     logger.info(f"Training for {train_args['epochs']} epochs")
-    logger.debug(f"Batch size: {train_args['batch']}")
-    logger.debug(f"Learning rate: {train_args['lr0']}")
-    # NOTE: kpt_shape is in data.yaml, not in train_args
-
-    # Train
     logger.info("Starting training...")
-    logger.info("Note: WandB logging will be automatically initialized by Ultralytics")
     logger.info("-" * 60)
 
     start_time = datetime.now()
@@ -527,17 +344,14 @@ def train_localization_model(
     logger.info("-" * 60)
     logger.info(f"Training completed in {training_duration / 3600:.2f} hours")
 
-    # Clear GPU cache after training
     try:
         import torch
 
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-            logger.debug("GPU cache cleared after training")
     except ImportError:
         pass
 
-    # Evaluate on test set
     logger.info("Evaluating on test set...")
     test_metrics = model.val(
         data=data_yaml_abs,
@@ -549,44 +363,24 @@ def train_localization_model(
         exist_ok=True,
     )
 
-    # Log final metrics to WandB
-    final_metrics = {
-        "training_duration_hours": training_duration / 3600,
-    }
+    final_metrics = {"training_duration_hours": training_duration / 3600}
 
-    # Safely extract validation metrics from training results (Pose-specific)
     if results is not None and hasattr(results, "pose") and results.pose is not None:
         final_metrics.update(
             {
-                "val/mAP50_final": (
-                    float(results.pose.map50) if results.pose.map50 is not None else 0.0
+                "val/pose/mAP50": (
+                    float(results.pose.map50)
+                    if hasattr(results.pose, "map50")
+                    else None
                 ),
-                "val/mAP50-95_final": (
-                    float(results.pose.map) if results.pose.map is not None else 0.0
-                ),
-                "val/precision_final": (
-                    float(results.pose.mp) if results.pose.mp is not None else 0.0
-                ),
-                "val/recall_final": (
-                    float(results.pose.mr) if results.pose.mr is not None else 0.0
+                "val/pose/mAP50-95": (
+                    float(results.pose.map) if hasattr(results.pose, "map") else None
                 ),
             }
-        )
-        logger.debug(
-            f"Validation mAP@50: {final_metrics.get('val/mAP50_final', 0.0):.4f}"
         )
     else:
-        logger.warning("Training results object is None or missing pose metrics")
-        final_metrics.update(
-            {
-                "val/mAP50_final": 0.0,
-                "val/mAP50-95_final": 0.0,
-                "val/precision_final": 0.0,
-                "val/recall_final": 0.0,
-            }
-        )
+        logger.warning("No validation pose metrics available")
 
-    # Safely extract test metrics (Pose-specific)
     if (
         test_metrics is not None
         and hasattr(test_metrics, "pose")
@@ -594,62 +388,36 @@ def train_localization_model(
     ):
         final_metrics.update(
             {
-                "test/mAP50": (
+                "test/pose/mAP50": (
                     float(test_metrics.pose.map50)
-                    if test_metrics.pose.map50 is not None
-                    else 0.0
+                    if hasattr(test_metrics.pose, "map50")
+                    else None
                 ),
-                "test/mAP50-95": (
+                "test/pose/mAP50-95": (
                     float(test_metrics.pose.map)
-                    if test_metrics.pose.map is not None
-                    else 0.0
-                ),
-                "test/precision": (
-                    float(test_metrics.pose.mp)
-                    if test_metrics.pose.mp is not None
-                    else 0.0
-                ),
-                "test/recall": (
-                    float(test_metrics.pose.mr)
-                    if test_metrics.pose.mr is not None
-                    else 0.0
+                    if hasattr(test_metrics.pose, "map")
+                    else None
                 ),
             }
         )
-        logger.debug(f"Test mAP@50: {final_metrics.get('test/mAP50', 0.0):.4f}")
     else:
-        logger.warning("Test metrics object is None or missing pose metrics")
-        final_metrics.update(
-            {
-                "test/mAP50": 0.0,
-                "test/mAP50-95": 0.0,
-                "test/precision": 0.0,
-                "test/recall": 0.0,
-            }
-        )
+        logger.warning("No test pose metrics available")
 
     try:
         import wandb
 
-        if wandb.run:
+        if wandb.run is not None:
             wandb.log(final_metrics)
-            wandb.finish()
-            logger.debug("WandB run finished")
+            logger.info("Final metrics logged to WandB")
     except (ImportError, AttributeError):
         pass
 
-    # Print final metrics
     logger.info("Final Validation Metrics:")
     if results is not None and hasattr(results, "pose") and results.pose is not None:
-        logger.info(f"  mAP@50: {results.pose.map50:.4f}")
-        logger.info(f"  mAP@50-95: {results.pose.map:.4f}")
-        logger.info(f"  Precision: {results.pose.mp:.4f}")
-        logger.info(f"  Recall: {results.pose.mr:.4f}")
+        logger.info(f"  mAP@50: {getattr(results.pose, 'map50', 'N/A')}")
+        logger.info(f"  mAP@50-95: {getattr(results.pose, 'map', 'N/A')}")
     else:
-        logger.info(f"  mAP@50: {final_metrics.get('val/mAP50_final', 0.0):.4f}")
-        logger.info(f"  mAP@50-95: {final_metrics.get('val/mAP50-95_final', 0.0):.4f}")
-        logger.info(f"  Precision: {final_metrics.get('val/precision_final', 0.0):.4f}")
-        logger.info(f"  Recall: {final_metrics.get('val/recall_final', 0.0):.4f}")
+        logger.info("  No pose metrics available")
 
     logger.info("Final Test Metrics:")
     if (
@@ -657,31 +425,22 @@ def train_localization_model(
         and hasattr(test_metrics, "pose")
         and test_metrics.pose is not None
     ):
-        logger.info(f"  mAP@50: {test_metrics.pose.map50:.4f}")
-        logger.info(f"  mAP@50-95: {test_metrics.pose.map:.4f}")
-        logger.info(f"  Precision: {test_metrics.pose.mp:.4f}")
-        logger.info(f"  Recall: {test_metrics.pose.mr:.4f}")
+        logger.info(f"  mAP@50: {getattr(test_metrics.pose, 'map50', 'N/A')}")
+        logger.info(f"  mAP@50-95: {getattr(test_metrics.pose, 'map', 'N/A')}")
     else:
-        logger.info(f"  mAP@50: {final_metrics.get('test/mAP50', 0.0):.4f}")
-        logger.info(f"  mAP@50-95: {final_metrics.get('test/mAP50-95', 0.0):.4f}")
-        logger.info(f"  Precision: {final_metrics.get('test/precision', 0.0):.4f}")
-        logger.info(f"  Recall: {final_metrics.get('test/recall', 0.0):.4f}")
-
-    # Save metrics to JSON
-    import json
+        logger.info("  No pose metrics available")
 
     metrics_path = output_dir / "metrics.json"
     with open(metrics_path, "w") as f:
         json.dump(final_metrics, f, indent=2)
     logger.info(f"Metrics saved to {metrics_path}")
 
-    # Properly finish WandB run
     try:
         import wandb
 
         if wandb.run is not None:
             wandb.finish()
-            logger.info("WandB run finished successfully")
+            logger.info("WandB run finished")
     except ImportError:
         pass
 
@@ -703,60 +462,37 @@ def main():
         description="Train YOLOv11-Pose model for Container ID localization",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-
     parser.add_argument(
         "--config",
-        type=str,
-        default="experiments/001_loc_baseline.yaml",
-        help="Path to configuration file",
+        type=Path,
+        required=True,
+        help="Path to experiment configuration file (YAML)",
     )
-
     parser.add_argument(
-        "--experiment",
+        "--experiment-name",
         type=str,
         default=None,
-        help="Experiment name for WandB tracking",
+        help="Experiment name (overrides config)",
     )
-
     parser.add_argument(
         "--data",
-        type=str,
-        default="data/processed/localization/data.yaml",
-        help="Path to dataset configuration file",
+        type=Path,
+        default=Path("data/processed/localization/data.yaml"),
+        help="Path to data.yaml file",
     )
 
     args = parser.parse_args()
 
     try:
-        # Run training
         train_localization_model(
-            config_path=Path(args.config),
-            experiment_name=args.experiment,
-            data_yaml=Path(args.data),
+            config_path=args.config,
+            experiment_name=args.experiment_name,
+            data_yaml=args.data,
         )
     except KeyboardInterrupt:
-        logging.warning("Training interrupted by user")
-        # Cleanup WandB run on interruption
-        try:
-            import wandb
-
-            if wandb.run is not None:
-                wandb.finish(exit_code=1)
-                logging.info("WandB run marked as interrupted")
-        except ImportError:
-            pass
-        raise
+        logging.info("Training interrupted by user")
     except Exception as e:
-        logging.error(f"Training failed: {e}")
-        # Cleanup WandB run on failure
-        try:
-            import wandb
-
-            if wandb.run is not None:
-                wandb.finish(exit_code=1)
-                logging.info("WandB run marked as failed")
-        except ImportError:
-            pass
+        logging.error(f"Training failed: {e}", exc_info=True)
         raise
 
 
