@@ -397,29 +397,41 @@ def train_localization_model(
         logger.info("-" * 60)
         logger.info(f"Training completed in {training_duration / 3600:.2f} hours")
 
-        # Post-Training File Management: Move from runs/ to artifacts/
+        # Post-Training File Management: Move from training output to artifacts/
         # Handle case where results might be None or missing save_dir
         if results is None or not hasattr(results, "save_dir"):
             logger.warning("Training results object is None or missing save_dir")
-            logger.info("Searching for default training output in runs/ directory...")
+            logger.info("Searching for training output directory...")
 
-            # Find the most recent directory in runs/pose/
-            runs_pose_path = Path("runs/pose")
-            if runs_pose_path.exists():
-                train_dirs = sorted(
-                    runs_pose_path.glob("train*"),
-                    key=lambda p: p.stat().st_mtime,
-                    reverse=True,
-                )
-                if train_dirs:
-                    source_dir = train_dirs[0]
-                    logger.info(f"Found training output at: {source_dir}")
-                else:
-                    raise RuntimeError("No training output found in runs/pose/")
+            # First, try the explicit project/name path from train_args
+            expected_dir = Path(train_args["project"]) / train_args["name"]
+            if expected_dir.exists():
+                source_dir = expected_dir
+                logger.info(f"Found training output at: {source_dir}")
             else:
-                raise RuntimeError(
-                    "Training output directory runs/pose/ does not exist"
-                )
+                # Fallback: search in default runs/pose/ directory
+                runs_pose_path = Path("runs/pose")
+                if runs_pose_path.exists():
+                    train_dirs = sorted(
+                        runs_pose_path.glob("train*"),
+                        key=lambda p: p.stat().st_mtime,
+                        reverse=True,
+                    )
+                    if train_dirs:
+                        source_dir = train_dirs[0]
+                        logger.info(f"Found training output at: {source_dir}")
+                    else:
+                        raise RuntimeError(
+                            f"No training output found. Searched in:\n"
+                            f"  - {expected_dir.absolute()}\n"
+                            f"  - {runs_pose_path.absolute()}"
+                        )
+                else:
+                    raise RuntimeError(
+                        f"Training output directory not found. Searched:\n"
+                        f"  - {expected_dir.absolute()} (does not exist)\n"
+                        f"  - {runs_pose_path.absolute()} (does not exist)"
+                    )
         else:
             source_dir = Path(results.save_dir)
 
