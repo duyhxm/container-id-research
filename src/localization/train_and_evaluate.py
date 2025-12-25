@@ -308,8 +308,8 @@ def train_localization_model(
     try:
         from ultralytics import settings
 
-        settings.update({"wandb": True})
-        logger.info("WandB logging enabled in Ultralytics")
+        settings.update({"wandb": False})
+        logger.info("WandB auto-logging disabled (using manual init + callback)")
     except Exception as e:
         logger.warning(f"Could not configure Ultralytics settings: {e}")
 
