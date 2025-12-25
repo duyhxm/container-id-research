@@ -18,7 +18,6 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 import yaml
-from wandb.integration.ultralytics import add_wandb_callback
 
 from src.utils.logging_config import setup_logging
 
@@ -91,54 +90,84 @@ def load_config(config_path: Path) -> Dict[str, Any]:
     return config
 
 
-def initialize_wandb(config: Dict[str, Any], experiment_name: Optional[str]):
-    """Initialize Weights & Biases experiment tracking with proper project naming.
+def initialize_wandb_for_ddp(
+    config: Dict[str, Any], experiment_name: Optional[str]
+) -> tuple[Optional[str], Optional[str], Optional[str]]:
+    """Initialize WandB for DDP training using Pass-the-Baton strategy.
+
+    Phase 1 (Pre-Train): Creates run, sets environment variables, then
+    immediately finishes to release lock for DDP workers.
 
     Args:
         config: Localization configuration dictionary
         experiment_name: Name for this experiment run
 
     Returns:
-        WandB run object or None if WandB not available
+        Tuple of (run_id, run_name, project) for post-training re-init,
+        or (None, None, None) if WandB not available
     """
     try:
         import wandb
     except ImportError:
         logging.warning("WandB not installed. Skipping experiment tracking.")
-        return None
+        return None, None, None
 
     if wandb.run is not None:
-        logging.info(f"WandB run already active: {wandb.run.name}")
-        return wandb.run
+        logging.warning(
+            f"WandB run already active: {wandb.run.name}. Finishing to prevent DDP lock."
+        )
+        run_id = wandb.run.id
+        run_name = wandb.run.name
+        project = wandb.run.project
+        wandb.finish()
+    else:
+        wandb_config = config.get("wandb", {})
 
-    wandb_config = config.get("wandb", {})
+        run = wandb.init(
+            project=wandb_config.get("project", "container-id-localization"),
+            entity=wandb_config.get("entity"),
+            name=experiment_name or wandb_config.get("name"),
+            config={
+                "model": config.get("model", {}),
+                "training": config.get("training", {}),
+                "augmentation": config.get("augmentation", {}),
+                "keypoints": config.get("keypoints", {}),
+                "validation": config.get("validation", {}),
+            },
+            tags=wandb_config.get("tags", []),
+            notes=wandb_config.get(
+                "notes",
+                "YOLOv11-Pose training for Container ID 4-point keypoint detection",
+            ),
+            save_code=True,
+        )
 
-    run = wandb.init(
-        project=wandb_config.get("project", "container-id-localization"),
-        entity=wandb_config.get("entity"),
-        name=experiment_name or wandb_config.get("name"),
-        config={
-            "model": config.get("model", {}),
-            "training": config.get("training", {}),
-            "augmentation": config.get("augmentation", {}),
-            "keypoints": config.get("keypoints", {}),
-            "validation": config.get("validation", {}),
-        },
-        tags=wandb_config.get("tags", []),
-        notes=wandb_config.get(
-            "notes", "YOLOv11-Pose training for Container ID 4-point keypoint detection"
-        ),
-        save_code=True,
-    )
+        if run is None:
+            logging.warning("WandB run initialization failed")
+            return None, None, None
 
-    if run is not None:
-        os.environ["WANDB_RUN_ID"] = run.id
-        os.environ["WANDB_PROJECT"] = run.project
-        logging.info(f"WandB run initialized: {run.name}")
+        run_id = run.id
+        run_name = run.name
+        project = run.project
+
+        logging.info(f"WandB run created: {run_name}")
         logging.info(f"WandB URL: {run.url}")
-        logging.info(f"Run ID propagated to environment: {run.id}")
 
-    return run
+        # CRITICAL: Finish immediately to release lock for DDP workers
+        run.finish()
+        logging.info("WandB run finished (Pass-the-Baton Phase 1 complete)")
+
+    # Set environment variables for Ultralytics to adopt
+    os.environ["WANDB_RUN_ID"] = run_id
+    os.environ["WANDB_PROJECT"] = project
+    os.environ["WANDB_NAME"] = run_name  # Critical: Preserves run name on dashboard
+
+    logging.info(f"Environment variables set for DDP:")
+    logging.info(f"  WANDB_RUN_ID: {run_id}")
+    logging.info(f"  WANDB_PROJECT: {project}")
+    logging.info(f"  WANDB_NAME: {run_name}")
+
+    return run_id, run_name, project
 
 
 def prepare_training_args(
@@ -310,8 +339,8 @@ def train_localization_model(
     model_name = config["model"]["architecture"]
     logger.debug(f"Model architecture: {model_name}")
 
-    logger.info("Initializing experiment tracking...")
-    wandb_run = initialize_wandb(config, experiment_name)
+    logger.info("Initializing experiment tracking (Pass-the-Baton Phase 1)...")
+    run_id, run_name, wandb_project = initialize_wandb_for_ddp(config, experiment_name)
 
     logger.info("Configuring Ultralytics settings...")
     try:
@@ -319,7 +348,7 @@ def train_localization_model(
 
         settings.update({"wandb": True})
         logger.info(
-            "WandB auto-logging ENABLED (will adopt existing run via WANDB_RUN_ID)"
+            "WandB auto-logging ENABLED (DDP workers will adopt run via WANDB_RUN_ID)"
         )
     except Exception as e:
         logger.warning(f"Could not configure Ultralytics settings: {e}")
@@ -334,13 +363,6 @@ def train_localization_model(
         logger.info("Starting from pretrained weights")
         model = YOLO(f"{model_name}.pt")
         logger.info(f"Loaded pretrained model: {model_name}.pt")
-
-    logger.info("Attaching WandB callback for Rich Media logging...")
-    try:
-        add_wandb_callback(model, enable_model_checkpointing=True)
-        logger.info("WandB callback attached successfully")
-    except Exception as e:
-        logger.warning(f"Could not attach WandB callback: {e}")
 
     logger.debug("Preparing training configuration...")
     train_args = prepare_training_args(
@@ -429,14 +451,26 @@ def train_localization_model(
         else:
             logger.warning("No test pose metrics available")
 
-        try:
-            import wandb
+        # Pass-the-Baton Phase 2: Re-init WandB to log final metrics
+        if run_id is not None:
+            try:
+                import wandb
 
-            if wandb.run is not None:
-                wandb.log(final_metrics)
+                logger.info("Re-initializing WandB for final metrics logging...")
+                run = wandb.init(
+                    id=run_id,
+                    project=wandb_project,
+                    name=run_name,
+                    resume="must",
+                )
+                run.log(final_metrics)
                 logger.info("Final metrics logged to WandB")
-        except (ImportError, AttributeError):
-            pass
+                run.finish()
+                logger.info("WandB run finished (Pass-the-Baton Phase 2 complete)")
+            except (ImportError, AttributeError) as e:
+                logger.warning(f"Could not log final metrics to WandB: {e}")
+        else:
+            logger.info("WandB not configured, skipping final metrics logging")
 
         logger.info("Final Validation Metrics:")
         if (
@@ -476,17 +510,18 @@ def train_localization_model(
             "final_metrics": final_metrics,
         }
 
-    finally:
+    except Exception as e:
+        logger.error(f"Training failed: {e}", exc_info=True)
+        # Ensure WandB is cleaned up on error
         try:
             import wandb
 
             if wandb.run is not None:
-                wandb.finish()
-                logger.info("WandB run finished gracefully")
-        except ImportError:
+                wandb.finish(exit_code=1)
+                logger.info("WandB run finished with error status")
+        except Exception:
             pass
-        except Exception as e:
-            logger.warning(f"Error finishing WandB run: {e}")
+        raise
 
 
 def main():
