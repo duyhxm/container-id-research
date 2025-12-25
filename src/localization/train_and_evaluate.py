@@ -13,6 +13,7 @@ import argparse
 import json
 import logging
 import os
+import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -192,13 +193,6 @@ def prepare_training_args(
     aug_cfg = config.get("augmentation", {})
     kpt_cfg = config.get("keypoints", {})
 
-    local_project_path = (
-        f"artifacts/localization/{experiment_name}"
-        if experiment_name
-        else "artifacts/localization/default"
-    )
-    run_name = "train"
-
     hardware_cfg = {}
     if config_path and config_path.exists():
         try:
@@ -282,8 +276,6 @@ def prepare_training_args(
         "dfl": train_cfg.get("dfl", 1.5),
         "pose": train_cfg.get("pose", 12.0),
         "kobj": train_cfg.get("kobj", 1.0),
-        "project": local_project_path,
-        "name": run_name,
         "exist_ok": True,
         "save": True,
         "save_period": -1,
@@ -369,10 +361,6 @@ def train_localization_model(
         config, data_yaml_abs, experiment_name, config_path
     )
 
-    output_dir = Path(train_args["project"]) / train_args["name"]
-    output_dir.mkdir(parents=True, exist_ok=True)
-    logger.debug(f"Output directory: {output_dir.absolute()}")
-
     logger.info(f"Training for {train_args['epochs']} epochs")
     logger.info("Starting training...")
     logger.info("-" * 60)
@@ -385,6 +373,36 @@ def train_localization_model(
         training_duration = (end_time - start_time).total_seconds()
         logger.info("-" * 60)
         logger.info(f"Training completed in {training_duration / 3600:.2f} hours")
+
+        # Post-Training File Management: Move from runs/ to artifacts/
+        source_dir = Path(results.save_dir)
+        target_dir = (
+            Path(f"artifacts/localization/{experiment_name}/train")
+            if experiment_name
+            else Path("artifacts/localization/default/train")
+        )
+
+        logger.info(f"Moving training results from {source_dir} to {target_dir}...")
+
+        # Remove target if exists to prevent nested directories
+        if target_dir.exists():
+            logger.debug(f"Removing existing target directory: {target_dir}")
+            shutil.rmtree(target_dir, ignore_errors=True)
+
+        # Move the entire directory
+        target_dir.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(source_dir), str(target_dir))
+        logger.info(f"Results moved successfully to {target_dir}")
+
+        # Cleanup default runs directory
+        if Path("runs").exists():
+            logger.info("Cleaning up default runs directory...")
+            shutil.rmtree("runs", ignore_errors=True)
+            logger.debug("Cleanup complete")
+
+        # Update output_dir for downstream use
+        output_dir = target_dir
+        logger.debug(f"Output directory updated: {output_dir.absolute()}")
 
         try:
             import torch
@@ -400,7 +418,7 @@ def train_localization_model(
             split="test",
             save_json=True,
             plots=True,
-            project=train_args["project"],
+            project=str(output_dir.parent),
             name="test",
             exist_ok=True,
         )
