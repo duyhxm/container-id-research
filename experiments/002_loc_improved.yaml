@@ -1,0 +1,111 @@
+# Experiment 002: Localization Improved - High Pose Weight + Perspective Aug
+# Module: Localization (Container ID Region Estimation)
+# Description: YOLOv11s-Pose with increased keypoint loss weight and perspective augmentation
+# Base: exp001_baseline
+# Changes: 
+#   - Increased pose weight from ~1.0 to 3.0 (prioritize keypoint accuracy)
+#   - Enabled perspective augmentation (0.0005)
+#   - Increased rotation range from 5° to 10°
+#   - Increased epochs from 100 to 150
+
+# Experiment metadata
+experiment:
+  name: localization_exp002_yolo11s_pose_improved
+
+localization:
+  # Model configuration
+  model:
+    architecture: yolo11s-pose  # YOLOv11-Small Pose Estimation
+    pretrained: true
+    resume_from: null  # null = train from scratch, or path to checkpoint
+    
+  # Training hyperparameters
+  training:
+    epochs: 150                 # ⭐ Increased from 100 (allow model to converge with higher pose weight)
+    batch_size: 64              # Keep same (conservative for Kaggle T4 x2)
+    optimizer: AdamW
+    learning_rate: 0.001        # Keep base LR
+    weight_decay: 0.0005
+    warmup_epochs: 3
+    
+    # Learning rate schedule
+    lr_scheduler: cosine
+    
+    # Early stopping
+    patience: 20  # Stop if no improvement for 20 epochs
+    
+    # ⭐ Explicit Loss Weights (YOLO Pose)
+    box: 7.5      # Bounding box IoU loss weight (YOLO default)
+    cls: 0.5      # Classification loss weight (YOLO default)
+    pose: 3.0     # ⭐ Keypoint pose loss weight (increased from ~1.0 default)
+    dfl: 1.5      # Distribution Focal Loss weight (YOLO default)
+    
+  # Augmentation (YOLO built-in)
+  augmentation:
+    # Color augmentation (conservative for text regions)
+    hsv_h: 0.01  # Minimal hue shift (text color is important)
+    hsv_s: 0.4   # Moderate saturation
+    hsv_v: 0.3   # Moderate value
+    
+    # Geometric augmentation (carefully tuned for keypoint detection)
+    degrees: 10.0           # ⭐ Increased from 5.0 (handle more rotation variance)
+    translate: 0.1          # Keep same (10% of image)
+    scale: 0.3              # Keep same (30% scale variance)
+    shear: 0.0              # NO shear (distorts text perspective)
+    perspective: 0.0005     # ⭐ NEW: Enable slight perspective (was 0.0)
+    
+    # Flipping (CRITICAL: NO horizontal flip for text!)
+    flipud: 0.0  # NO vertical flip
+    fliplr: 0.0  # NO horizontal flip (creates mirrored text)
+    
+    # Mosaic and mixup (disabled for keypoint detection)
+    mosaic: 1.0      # Keep enabled (YOLO default, helps with scale variance)
+    mixup: 0.0       # Disabled (not suitable for keypoints)
+    copy_paste: 0.0  # Disabled
+    
+  # Keypoint-specific configuration
+  keypoints:
+    # Keypoint shape: [num_keypoints, num_coordinates]
+    # 4 keypoints (TL, TR, BR, BL), 3 values each (x, y, visibility)
+    kpt_shape: [4, 3]
+    
+    # Flip indices (identity mapping since we disable flipping)
+    # Format: [kpt0_flip_idx, kpt1_flip_idx, kpt2_flip_idx, kpt3_flip_idx]
+    flip_idx: [0, 1, 2, 3]  # No remapping needed (flipping disabled)
+    
+  # Validation
+  validation:
+    conf_threshold: 0.25  # Keypoint confidence threshold
+    iou_threshold: 0.45   # NMS IoU threshold for bboxes
+    
+  # Experiment tracking
+  wandb:
+    project: container-id-research
+    tags:
+      - module-3
+      - localization
+      - yolo11s-pose
+      - improved
+      - high-pose-weight
+      - perspective-aug
+    notes: |
+      Improved training with increased pose loss weight (3.0x) and perspective augmentation.
+      Goal: Reduce MDE from 14.92px to <10px, improve IoU from 0.647 to >0.75.
+      Target: Fix Keypoint 3 (Bottom-Left) imbalance (23.50px → <15px).
+
+# Hardware configuration (for Kaggle T4 x2)
+hardware:
+  multi_gpu: true           # Enable multi-GPU for Kaggle T4 x2
+  num_workers: 4            # Data loading workers
+  mixed_precision: true     # Use AMP for faster training
+
+# Expected Results (based on analysis)
+# Current (exp001):
+#   - MDE: 14.92 ± 8.83 px
+#   - IoU: 0.647 ± 0.106
+#   - Keypoint 3 Error: 23.50 px
+# 
+# Target (exp002):
+#   - MDE: <10 px (33% improvement)
+#   - IoU: >0.75 (16% improvement)
+#   - Keypoint 3 Error: <15 px (36% improvement)

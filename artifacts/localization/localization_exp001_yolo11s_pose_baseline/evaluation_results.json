@@ -1,0 +1,25 @@
+{
+  "model_path": "weights\\localization\\best.pt",
+  "test_samples": 75,
+  "multiple_detections_count": 43,
+  "mean_euclidean_distance_error_pixels": 13.873687552523858,
+  "std_euclidean_distance_error_pixels": 5.746958204731022,
+  "median_euclidean_distance_error_pixels": 13.378582485185152,
+  "max_euclidean_distance_error_pixels": 32.7340349931216,
+  "mean_polygon_iou": 0.6579333686158025,
+  "std_polygon_iou": 0.12439193538928103,
+  "median_polygon_iou": 0.6727745713723435,
+  "min_polygon_iou": 0.0,
+  "topology_accuracy": 0.64,
+  "topology_correct_count": 48,
+  "targets": {
+    "mean_euclidean_distance_error": "< 5 pixels",
+    "polygon_iou": "> 0.85",
+    "topology_accuracy": "100%"
+  },
+  "status": {
+    "mde_passed": false,
+    "iou_passed": false,
+    "topology_passed": false
+  }
+}

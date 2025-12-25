@@ -53,6 +53,7 @@ CONFIG = {
     "dataset_path": Path("data/processed/localization"),
     "github_username": "duyhxm",
     "secrets_path": KAGGLE_INPUT_DIR,
+    "config_file": "experiments/002_loc_improved.yaml",
 }
 
 # ============================================================================
@@ -681,7 +682,7 @@ def display_config() -> None:
 
     import yaml
 
-    with open("experiments/001_loc_baseline.yaml", "r") as f:
+    with open(CONFIG["config_file"], "r") as f:
         params = yaml.safe_load(f)
 
     config = params["localization"]
@@ -771,7 +772,7 @@ def train_model(experiment_name: str) -> bool:
     print("   - Model Versioning: Automatic DVC add after training")
     print("")
     print("💡 Training mode (fresh/resume) is controlled by config file:")
-    print("   experiments/001_loc_baseline.yaml → localization.model.resume_from")
+    print(f"   {CONFIG['config_file']} → localization.model.resume_from")
     print("   - null = Fresh training with pretrained YOLO weights")
     print("   - path = Resume from checkpoint")
     print("=" * 70)
@@ -784,7 +785,7 @@ def train_model(experiment_name: str) -> bool:
 
     cmd = (
         f"{sys.executable} src/localization/train_and_evaluate.py "
-        f"--config experiments/001_loc_baseline.yaml "
+        f"--config {CONFIG['config_file']} "
         f"--experiment {experiment_name}"
     )
 
@@ -1175,12 +1176,12 @@ def main() -> None:
         # Load experiment name from config file early (before training)
         import yaml
 
-        with open(CONFIG["repo_path"] / "experiments/001_loc_baseline.yaml", "r") as f:
+        with open(CONFIG["repo_path"] / CONFIG["config_file"], "r") as f:
             experiment_config = yaml.safe_load(f)
 
         # Extract experiment name and add to CONFIG
         CONFIG["experiment_name"] = experiment_config.get("experiment", {}).get(
-            "name", "localization_exp001_yolo11s_pose_baseline"
+            "name", "localization_exp002_yolo11s_pose_improved"
         )
         log("INFO", f"Experiment: {CONFIG['experiment_name']}")
 
