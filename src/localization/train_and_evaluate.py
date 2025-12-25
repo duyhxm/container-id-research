@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 import yaml
+from wandb.integration.ultralytics import add_wandb_callback
 
 from src.utils.logging_config import setup_logging
 
@@ -322,6 +323,13 @@ def train_localization_model(
         logger.info("Starting from pretrained weights")
         model = YOLO(f"{model_name}.pt")
         logger.info(f"Loaded pretrained model: {model_name}.pt")
+
+    logger.info("Attaching WandB callback for Rich Media logging...")
+    try:
+        add_wandb_callback(model, enable_model_checkpointing=True)
+        logger.info("WandB callback attached successfully")
+    except Exception as e:
+        logger.warning(f"Could not attach WandB callback: {e}")
 
     logger.debug("Preparing training configuration...")
     train_args = prepare_training_args(
