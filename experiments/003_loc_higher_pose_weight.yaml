@@ -1,0 +1,128 @@
+# Experiment 003: Localization - Very High Pose Weight + Larger Batch
+# Module: Localization (Container ID Region Estimation)
+# Description: YOLOv11s-Pose with aggressive pose weight to fix Top-Left keypoint imbalance
+# Base: exp002_improved
+# Changes: 
+#   - MAJOR: Increased pose weight from 15.0 to 20.0 (fix KP0 Top-Left imbalance 13.34px → <10px)
+#   - Increased batch size from 64 to 96 (reduce variance in predictions)
+#   - Added cosine LR with warm restarts to escape plateaus
+#   - Increased perspective augmentation from 0.0005 to 0.001 (improve geometric robustness)
+#
+# Problem Analysis (from exp002):
+#   - KP0 (Top-Left): 13.34 ± 3.99 px ← WORST (1.92x higher than best)
+#   - KP1 (Top-Right): 6.96 ± 6.60 px ← HIGH VARIANCE
+#   - KP2 (Bottom-Right): 9.10 ± 4.67 px ← GOOD
+#   - KP3 (Bottom-Left): 10.41 ± 6.09 px ← HIGH VARIANCE
+#   - Overall MDE: 9.95 px (target: <8px)
+#   - Overall IoU: 0.832 (target: >0.85)
+
+# Experiment metadata
+experiment:
+  name: localization_exp003_yolo11s_pose_higher_weight
+
+localization:
+  # Model configuration
+  model:
+    architecture: yolo11s-pose  # YOLOv11-Small Pose Estimation
+    pretrained: true
+    resume_from: null  # null = train from scratch, or path to checkpoint
+    
+  # Training hyperparameters
+  training:
+    epochs: 150                 # Keep same as exp002
+    batch_size: 96              # ⭐ Increased from 64 (more stable gradients, reduce variance)
+    optimizer: AdamW
+    learning_rate: 0.001        # Keep base LR
+    weight_decay: 0.0005
+    warmup_epochs: 3
+    
+    # Learning rate schedule
+    lr_scheduler: cosine_with_restarts  # ⭐ NEW: Help escape plateaus
+    restart_epochs: 50                   # Restart every 50 epochs
+    
+    # Early stopping
+    patience: 25  # ⭐ Increased from 20 (allow more time to converge with higher pose weight)
+    
+    # ⭐ Explicit Loss Weights (YOLO Pose)
+    box: 7.5      # Bounding box IoU loss weight (YOLO default)
+    cls: 0.5      # Classification loss weight (YOLO default)
+    pose: 20.0    # ⭐⭐⭐ AGGRESSIVE: Increased from 15.0 to prioritize Top-Left keypoint
+    dfl: 1.5      # Distribution Focal Loss weight (YOLO default)
+    kobj: 1.0     # Keypoint objectness loss weight (YOLO default)
+    
+  # Augmentation (YOLO built-in)
+  augmentation:
+    # Color augmentation (conservative for text regions)
+    hsv_h: 0.01  # Minimal hue shift (text color is important)
+    hsv_s: 0.4   # Moderate saturation
+    hsv_v: 0.3   # Moderate value
+    
+    # Geometric augmentation (carefully tuned for keypoint detection)
+    degrees: 10.0           # Keep same (10° rotation)
+    translate: 0.1          # Keep same (10% of image)
+    scale: 0.3              # Keep same (30% scale variance)
+    shear: 0.0              # NO shear (distorts text perspective)
+    perspective: 0.001      # ⭐ Increased from 0.0005 (more perspective variance)
+    
+    # Flipping (CRITICAL: NO horizontal flip for text!)
+    flipud: 0.0  # NO vertical flip
+    fliplr: 0.0  # NO horizontal flip (creates mirrored text)
+    
+    # Mosaic and mixup (disabled for keypoint detection)
+    mosaic: 1.0      # Keep enabled (YOLO default, helps with scale variance)
+    mixup: 0.0       # Disabled (not suitable for keypoints)
+    copy_paste: 0.0  # Disabled
+    
+  # Keypoint-specific configuration
+  keypoints:
+    # Keypoint shape: [num_keypoints, num_coordinates]
+    # 4 keypoints (TL, TR, BR, BL), 3 values each (x, y, visibility)
+    kpt_shape: [4, 3]
+    
+    # Flip indices (identity mapping since we disable flipping)
+    # Format: [kpt0_flip_idx, kpt1_flip_idx, kpt2_flip_idx, kpt3_flip_idx]
+    flip_idx: [0, 1, 2, 3]  # No remapping needed (flipping disabled)
+    
+  # Validation
+  validation:
+    conf_threshold: 0.25  # Keypoint confidence threshold (MUST match inference!)
+    iou_threshold: 0.45   # NMS IoU threshold for bboxes
+    
+  # Experiment tracking
+  wandb:
+    project: container-id-localization
+    tags:
+      - module-3
+      - localization
+      - yolo11s-pose
+      - very-high-pose-weight
+      - fix-top-left-imbalance
+      - larger-batch
+    notes: |
+      Aggressive pose weight increase (20.0) to fix Top-Left keypoint imbalance.
+      Larger batch size (96) to reduce prediction variance.
+      Cosine LR with warm restarts to escape training plateaus.
+      
+      Target improvements:
+      - KP0 (Top-Left): 13.34px → <10px
+      - Overall MDE: 9.95px → <8px
+      - Overall IoU: 0.832 → >0.85
+      - Reduce variance in KP1 and KP3 predictions
+
+# Hardware configuration (for Kaggle T4 x2)
+hardware:
+  multi_gpu: true           # Enable multi-GPU for Kaggle T4 x2
+  num_workers: 4            # Data loading workers
+  mixed_precision: true     # Use AMP for faster training
+
+# Expected Results Comparison
+# 
+# Metric                  | exp001 | exp002 | exp003 (Target)
+# ------------------------|--------|--------|----------------
+# MDE                     | 14.92  | 9.95   | <8.0 px
+# Polygon IoU             | 0.647  | 0.832  | >0.85
+# KP0 Error (Top-Left)    | ~23    | 13.34  | <10.0 px
+# KP1 Error (Top-Right)   | -      | 6.96   | <7.0 px (maintain)
+# KP2 Error (Bottom-Right)| -      | 9.10   | <8.0 px
+# KP3 Error (Bottom-Left) | ~23    | 10.41  | <9.0 px
+# Detection Rate @ 0.25   | ~85%   | 100%   | 100%

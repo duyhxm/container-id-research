@@ -53,7 +53,7 @@ CONFIG = {
     "dataset_path": Path("data/processed/localization"),
     "github_username": "duyhxm",
     "secrets_path": KAGGLE_INPUT_DIR,
-    "config_file": "experiments/002_loc_improved.yaml",
+    "config_file": "experiments/003_loc_higher_pose_weight.yaml",
 }
 
 # ============================================================================
