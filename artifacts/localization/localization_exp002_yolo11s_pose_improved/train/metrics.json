@@ -1,0 +1,5 @@
+{
+  "training_duration_hours": 0.13396932777777779,
+  "test/pose/mAP50": 0.995,
+  "test/pose/mAP50-95": 0.9913233082706767
+}
