@@ -285,6 +285,12 @@ def prepare_training_args(
         "amp": hardware_cfg.get("mixed_precision", True),
         "val": True,
         "save_json": True,
+        # CRITICAL: Explicit WandB project/name for Kaggle/Notebook compatibility
+        # Ultralytics on Kaggle may auto-start WandB session before env vars are set,
+        # causing WANDB_PROJECT/WANDB_NAME to be ignored. Passing explicit arguments
+        # ensures WandB uses correct project name regardless of when session starts.
+        "project": "container-id-localization",
+        "name": experiment_name,
     }
 
     return args
@@ -320,12 +326,6 @@ def train_localization_model(
     logger.debug(f"Configuration: {config_path}")
     logger.debug(f"Dataset: {data_yaml_abs}")
 
-    try:
-        from ultralytics import YOLO
-    except ImportError:
-        logger.error("Ultralytics not installed. Run: pip install ultralytics")
-        raise
-
     logger.info("Loading configuration...")
     config = load_config(config_path)
     model_name = config["model"]["architecture"]
@@ -334,13 +334,22 @@ def train_localization_model(
     logger.info("Initializing experiment tracking (Pass-the-Baton Phase 1)...")
     run_id, run_name, wandb_project = initialize_wandb_for_ddp(config, experiment_name)
 
-    logger.info("Configuring Ultralytics settings...")
+    # CRITICAL: Import YOLO AFTER setting environment variables
+    # This ensures Ultralytics reads WANDB_PROJECT and WANDB_NAME from environment
+    logger.debug("Importing Ultralytics YOLO (after env vars set)...")
     try:
-        from ultralytics import settings
+        from ultralytics import YOLO, settings
+    except ImportError:
+        logger.error("Ultralytics not installed. Run: pip install ultralytics")
+        raise
 
+    # Configure Ultralytics WandB settings
+    logger.info("Configuring Ultralytics WandB settings...")
+    try:
         settings.update({"wandb": True})
+        logger.info("WandB auto-logging ENABLED")
         logger.info(
-            "WandB auto-logging ENABLED (DDP workers will adopt run via WANDB_RUN_ID)"
+            "Ultralytics will use WANDB_PROJECT and WANDB_NAME from environment"
         )
     except Exception as e:
         logger.warning(f"Could not configure Ultralytics settings: {e}")
@@ -361,6 +370,20 @@ def train_localization_model(
         config, data_yaml_abs, experiment_name, config_path
     )
 
+    # CRITICAL: Ensure no WandB session is active before training
+    # This forces Ultralytics to read from environment variables
+    try:
+        import wandb
+
+        if wandb.run is not None:
+            logger.warning(
+                f"Active WandB run detected: {wandb.run.name}. Finishing it..."
+            )
+            wandb.finish()
+            logger.info("Previous WandB session finished")
+    except ImportError:
+        pass
+
     logger.info(f"Training for {train_args['epochs']} epochs")
     logger.info("Starting training...")
     logger.info("-" * 60)
@@ -375,7 +398,31 @@ def train_localization_model(
         logger.info(f"Training completed in {training_duration / 3600:.2f} hours")
 
         # Post-Training File Management: Move from runs/ to artifacts/
-        source_dir = Path(results.save_dir)
+        # Handle case where results might be None or missing save_dir
+        if results is None or not hasattr(results, "save_dir"):
+            logger.warning("Training results object is None or missing save_dir")
+            logger.info("Searching for default training output in runs/ directory...")
+
+            # Find the most recent directory in runs/pose/
+            runs_pose_path = Path("runs/pose")
+            if runs_pose_path.exists():
+                train_dirs = sorted(
+                    runs_pose_path.glob("train*"),
+                    key=lambda p: p.stat().st_mtime,
+                    reverse=True,
+                )
+                if train_dirs:
+                    source_dir = train_dirs[0]
+                    logger.info(f"Found training output at: {source_dir}")
+                else:
+                    raise RuntimeError("No training output found in runs/pose/")
+            else:
+                raise RuntimeError(
+                    "Training output directory runs/pose/ does not exist"
+                )
+        else:
+            source_dir = Path(results.save_dir)
+
         target_dir = (
             Path(f"artifacts/localization/{experiment_name}/train")
             if experiment_name
