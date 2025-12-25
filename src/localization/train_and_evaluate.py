@@ -91,26 +91,29 @@ def load_config(config_path: Path) -> Dict[str, Any]:
     return config
 
 
-def initialize_wandb(config: Dict[str, Any], experiment_name: Optional[str]) -> None:
+def initialize_wandb(config: Dict[str, Any], experiment_name: Optional[str]):
     """Initialize Weights & Biases experiment tracking with proper project naming.
 
     Args:
         config: Localization configuration dictionary
         experiment_name: Name for this experiment run
+
+    Returns:
+        WandB run object or None if WandB not available
     """
     try:
         import wandb
     except ImportError:
         logging.warning("WandB not installed. Skipping experiment tracking.")
-        return
+        return None
 
     if wandb.run is not None:
         logging.info(f"WandB run already active: {wandb.run.name}")
-        return
+        return wandb.run
 
     wandb_config = config.get("wandb", {})
 
-    wandb.init(
+    run = wandb.init(
         project=wandb_config.get("project", "container-id-localization"),
         entity=wandb_config.get("entity"),
         name=experiment_name or wandb_config.get("name"),
@@ -128,8 +131,14 @@ def initialize_wandb(config: Dict[str, Any], experiment_name: Optional[str]) -> 
         save_code=True,
     )
 
-    logging.info(f"WandB run initialized: {wandb.run.name}")
-    logging.info(f"WandB URL: {wandb.run.url}")
+    if run is not None:
+        os.environ["WANDB_RUN_ID"] = run.id
+        os.environ["WANDB_PROJECT"] = run.project
+        logging.info(f"WandB run initialized: {run.name}")
+        logging.info(f"WandB URL: {run.url}")
+        logging.info(f"Run ID propagated to environment: {run.id}")
+
+    return run
 
 
 def prepare_training_args(
@@ -302,14 +311,16 @@ def train_localization_model(
     logger.debug(f"Model architecture: {model_name}")
 
     logger.info("Initializing experiment tracking...")
-    initialize_wandb(config, experiment_name)
+    wandb_run = initialize_wandb(config, experiment_name)
 
     logger.info("Configuring Ultralytics settings...")
     try:
         from ultralytics import settings
 
-        settings.update({"wandb": False})
-        logger.info("WandB auto-logging disabled (using manual init + callback)")
+        settings.update({"wandb": True})
+        logger.info(
+            "WandB auto-logging ENABLED (will adopt existing run via WANDB_RUN_ID)"
+        )
     except Exception as e:
         logger.warning(f"Could not configure Ultralytics settings: {e}")
 
@@ -344,124 +355,138 @@ def train_localization_model(
     logger.info("Starting training...")
     logger.info("-" * 60)
 
-    start_time = datetime.now()
-    results = model.train(**train_args)
-    end_time = datetime.now()
-
-    training_duration = (end_time - start_time).total_seconds()
-    logger.info("-" * 60)
-    logger.info(f"Training completed in {training_duration / 3600:.2f} hours")
-
     try:
-        import torch
+        start_time = datetime.now()
+        results = model.train(**train_args)
+        end_time = datetime.now()
 
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-    except ImportError:
-        pass
+        training_duration = (end_time - start_time).total_seconds()
+        logger.info("-" * 60)
+        logger.info(f"Training completed in {training_duration / 3600:.2f} hours")
 
-    logger.info("Evaluating on test set...")
-    test_metrics = model.val(
-        data=data_yaml_abs,
-        split="test",
-        save_json=True,
-        plots=True,
-        project=train_args["project"],
-        name="test",
-        exist_ok=True,
-    )
+        try:
+            import torch
 
-    final_metrics = {"training_duration_hours": training_duration / 3600}
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except ImportError:
+            pass
 
-    if results is not None and hasattr(results, "pose") and results.pose is not None:
-        final_metrics.update(
-            {
-                "val/pose/mAP50": (
-                    float(results.pose.map50)
-                    if hasattr(results.pose, "map50")
-                    else None
-                ),
-                "val/pose/mAP50-95": (
-                    float(results.pose.map) if hasattr(results.pose, "map") else None
-                ),
-            }
+        logger.info("Evaluating on test set...")
+        test_metrics = model.val(
+            data=data_yaml_abs,
+            split="test",
+            save_json=True,
+            plots=True,
+            project=train_args["project"],
+            name="test",
+            exist_ok=True,
         )
-    else:
-        logger.warning("No validation pose metrics available")
 
-    if (
-        test_metrics is not None
-        and hasattr(test_metrics, "pose")
-        and test_metrics.pose is not None
-    ):
-        final_metrics.update(
-            {
-                "test/pose/mAP50": (
-                    float(test_metrics.pose.map50)
-                    if hasattr(test_metrics.pose, "map50")
-                    else None
-                ),
-                "test/pose/mAP50-95": (
-                    float(test_metrics.pose.map)
-                    if hasattr(test_metrics.pose, "map")
-                    else None
-                ),
-            }
-        )
-    else:
-        logger.warning("No test pose metrics available")
+        final_metrics = {"training_duration_hours": training_duration / 3600}
 
-    try:
-        import wandb
+        if (
+            results is not None
+            and hasattr(results, "pose")
+            and results.pose is not None
+        ):
+            final_metrics.update(
+                {
+                    "val/pose/mAP50": (
+                        float(results.pose.map50)
+                        if hasattr(results.pose, "map50")
+                        else None
+                    ),
+                    "val/pose/mAP50-95": (
+                        float(results.pose.map)
+                        if hasattr(results.pose, "map")
+                        else None
+                    ),
+                }
+            )
+        else:
+            logger.warning("No validation pose metrics available")
 
-        if wandb.run is not None:
-            wandb.log(final_metrics)
-            logger.info("Final metrics logged to WandB")
-    except (ImportError, AttributeError):
-        pass
+        if (
+            test_metrics is not None
+            and hasattr(test_metrics, "pose")
+            and test_metrics.pose is not None
+        ):
+            final_metrics.update(
+                {
+                    "test/pose/mAP50": (
+                        float(test_metrics.pose.map50)
+                        if hasattr(test_metrics.pose, "map50")
+                        else None
+                    ),
+                    "test/pose/mAP50-95": (
+                        float(test_metrics.pose.map)
+                        if hasattr(test_metrics.pose, "map")
+                        else None
+                    ),
+                }
+            )
+        else:
+            logger.warning("No test pose metrics available")
 
-    logger.info("Final Validation Metrics:")
-    if results is not None and hasattr(results, "pose") and results.pose is not None:
-        logger.info(f"  mAP@50: {getattr(results.pose, 'map50', 'N/A')}")
-        logger.info(f"  mAP@50-95: {getattr(results.pose, 'map', 'N/A')}")
-    else:
-        logger.info("  No pose metrics available")
+        try:
+            import wandb
 
-    logger.info("Final Test Metrics:")
-    if (
-        test_metrics is not None
-        and hasattr(test_metrics, "pose")
-        and test_metrics.pose is not None
-    ):
-        logger.info(f"  mAP@50: {getattr(test_metrics.pose, 'map50', 'N/A')}")
-        logger.info(f"  mAP@50-95: {getattr(test_metrics.pose, 'map', 'N/A')}")
-    else:
-        logger.info("  No pose metrics available")
+            if wandb.run is not None:
+                wandb.log(final_metrics)
+                logger.info("Final metrics logged to WandB")
+        except (ImportError, AttributeError):
+            pass
 
-    metrics_path = output_dir / "metrics.json"
-    with open(metrics_path, "w") as f:
-        json.dump(final_metrics, f, indent=2)
-    logger.info(f"Metrics saved to {metrics_path}")
+        logger.info("Final Validation Metrics:")
+        if (
+            results is not None
+            and hasattr(results, "pose")
+            and results.pose is not None
+        ):
+            logger.info(f"  mAP@50: {getattr(results.pose, 'map50', 'N/A')}")
+            logger.info(f"  mAP@50-95: {getattr(results.pose, 'map', 'N/A')}")
+        else:
+            logger.info("  No pose metrics available")
 
-    try:
-        import wandb
+        logger.info("Final Test Metrics:")
+        if (
+            test_metrics is not None
+            and hasattr(test_metrics, "pose")
+            and test_metrics.pose is not None
+        ):
+            logger.info(f"  mAP@50: {getattr(test_metrics.pose, 'map50', 'N/A')}")
+            logger.info(f"  mAP@50-95: {getattr(test_metrics.pose, 'map', 'N/A')}")
+        else:
+            logger.info("  No pose metrics available")
 
-        if wandb.run is not None:
-            wandb.finish()
-            logger.info("WandB run finished")
-    except ImportError:
-        pass
+        metrics_path = output_dir / "metrics.json"
+        with open(metrics_path, "w") as f:
+            json.dump(final_metrics, f, indent=2)
+        logger.info(f"Metrics saved to {metrics_path}")
 
-    logger.info("=" * 60)
-    logger.info("Training Complete!")
-    logger.info("=" * 60)
+        logger.info("=" * 60)
+        logger.info("Training Complete!")
+        logger.info("=" * 60)
 
-    return {
-        "results": results,
-        "test_metrics": test_metrics,
-        "duration_hours": training_duration / 3600,
-        "final_metrics": final_metrics,
-    }
+        return {
+            "results": results,
+            "test_metrics": test_metrics,
+            "duration_hours": training_duration / 3600,
+            "final_metrics": final_metrics,
+        }
+
+    finally:
+        try:
+            import wandb
+
+            if wandb.run is not None:
+                wandb.finish()
+                logger.info("WandB run finished gracefully")
+        except ImportError:
+            pass
+        except Exception as e:
+            logger.warning(f"Error finishing WandB run: {e}")
 
 
 def main():
