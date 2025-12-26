@@ -7,11 +7,15 @@ Tests the perspective transformation and ROI extraction utilities.
 import numpy as np
 import pytest
 
-from src.utils.image_rectification import extract_and_rectify_roi, order_points
+from src.alignment.image_rectification import extract_and_rectify_roi, order_points
 
 
 class TestOrderPoints:
-    """Test suite for order_points function."""
+    """
+    Test suite for order_points function.
+
+    Covers both basic ordering logic and H1 enhancement (convexity validation).
+    """
 
     def test_order_points_basic(self, sample_quadrilateral_points):
         """Test basic point ordering with a standard quadrilateral."""
@@ -67,6 +71,41 @@ class TestOrderPoints:
             decimal=2,
             err_msg="Already ordered points should remain the same",
         )
+
+    # =============================================================================
+    # H1 Enhancement: Convexity Validation Tests
+    # =============================================================================
+
+    def test_convex_quadrilateral_pass(self):
+        """Test H1: Convex quadrilaterals should pass validation."""
+        # Rectangle (clearly convex)
+        pts = np.array(
+            [[100, 100], [200, 100], [200, 150], [100, 150]], dtype=np.float32
+        )
+        ordered = order_points(pts)
+        assert ordered.shape == (4, 2)
+
+    def test_concave_quadrilateral_reject(self):
+        """Test H1: Concave quadrilaterals should be rejected."""
+        # Concave quad: one point pushed inward (interior angle > 180°)
+        pts = np.array(
+            [[100, 100], [300, 100], [200, 120], [100, 150]], dtype=np.float32
+        )
+        with pytest.raises(ValueError, match="do not form a convex quadrilateral"):
+            order_points(pts)
+
+    def test_nearly_collinear_points_handled_gracefully(self):
+        """Test H1: Nearly collinear points (degenerate quad) handled gracefully."""
+        # Points almost in a line (not a proper quadrilateral)
+        pts = np.array(
+            [[100, 100], [150, 101], [200, 102], [250, 103]], dtype=np.float32
+        )
+        # May pass or fail, but should not crash
+        try:
+            ordered = order_points(pts)
+            assert ordered.shape == (4, 2)
+        except ValueError:
+            pass  # Acceptable to reject as well
 
 
 class TestExtractAndRectifyROI:

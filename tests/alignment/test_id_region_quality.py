@@ -6,7 +6,7 @@ import cv2
 import numpy as np
 import pytest
 
-from src.alignment.quality_assessor import (
+from src.alignment.id_region_quality import (
     assess_quality,
     calculate_local_contrast,
     calculate_sharpness,
@@ -153,21 +153,25 @@ class TestAssessQuality:
         image[:, 150:200] = 255
         image[:, 250:300] = 255
 
-        passes, contrast, sharpness = assess_quality(
-            image, contrast_threshold=50, sharpness_threshold=50
+        # C2: Use sigmoid parameters, returns 5 values now
+        passes, contrast, sharpness, q_c, q_s = assess_quality(
+            image, contrast_tau=50.0, sharpness_tau=50.0
         )
 
         assert passes is True
         assert contrast > 50
         assert sharpness > 50
+        assert q_c >= 0.5  # Quality scores should pass
+        assert q_s >= 0.5
 
     def test_low_contrast_image_fails(self):
         """Test that low contrast image fails."""
         # Uniform gray image (no contrast)
         image = np.full((100, 400), 128, dtype=np.uint8)
 
-        passes, contrast, sharpness = assess_quality(
-            image, contrast_threshold=50, sharpness_threshold=50
+        # C2: Updated signature
+        passes, contrast, sharpness, q_c, q_s = assess_quality(
+            image, contrast_tau=50.0, sharpness_tau=50.0
         )
 
         assert passes is False
@@ -180,8 +184,9 @@ class TestAssessQuality:
         image[:, 100:300] = 255
         blurred = cv2.GaussianBlur(image, (51, 51), 20)
 
-        passes, contrast, sharpness = assess_quality(
-            blurred, contrast_threshold=50, sharpness_threshold=100
+        # C2: Updated signature with sigmoid parameters
+        passes, contrast, sharpness, q_c, q_s = assess_quality(
+            blurred, contrast_tau=50.0, sharpness_tau=100.0
         )
 
         assert passes is False
@@ -191,12 +196,19 @@ class TestAssessQuality:
         """Test that function returns both metrics regardless of pass/fail."""
         image = np.random.randint(0, 255, (100, 400), dtype=np.uint8)
 
-        passes, contrast, sharpness = assess_quality(
-            image, contrast_threshold=50, sharpness_threshold=100
+        # C2: Now returns 5 values (passes, M_C, M_S, Q_C, Q_S)
+        passes, contrast, sharpness, q_c, q_s = assess_quality(
+            image, contrast_tau=50.0, sharpness_tau=100.0
         )
 
         # Should return valid numbers
         assert isinstance(contrast, (int, float))
+        assert isinstance(sharpness, (int, float))
+        assert isinstance(q_c, float)
+        assert isinstance(q_s, float)
+        # Sigmoid outputs always in (0, 1) - endpoints approached but never reached
+        assert 0.0 <= q_c <= 1.0  # Allow boundary values
+        assert 0.0 <= q_s <= 1.0
         assert isinstance(sharpness, (int, float))
         assert contrast >= 0
         assert sharpness >= 0

@@ -16,15 +16,16 @@ def sample_container_image():
     # Create white background
     image = np.ones((600, 800, 3), dtype=np.uint8) * 255
 
-    # Draw a simulated container ID region (dark rectangle with white text)
-    pts = np.array([[200, 250], [550, 200], [570, 280], [180, 320]], dtype=np.int32)
+    # Draw a simulated container ID region with AR=7.0 (single-line mode)
+    # Height ~60px, Width ~420px
+    pts = np.array([[180, 250], [600, 240], [610, 300], [170, 310]], dtype=np.int32)
     cv2.fillPoly(image, [pts], (40, 40, 40))
 
     # Add some text-like features
     cv2.putText(
         image,
         "ABCD1234567",
-        (240, 270),
+        (220, 285),
         cv2.FONT_HERSHEY_SIMPLEX,
         1.2,
         (255, 255, 255),
@@ -43,8 +44,9 @@ class TestAlignmentProcessor:
         processor = AlignmentProcessor()
 
         assert processor.config is not None
-        assert len(processor.config.geometric.aspect_ratio_ranges) > 0
-        assert processor.config.geometric.aspect_ratio_ranges[0] == (1.5, 10.0)
+        # C1: Bimodal aspect ratio ranges
+        assert processor.config.geometric.aspect_ratio_ranges[0] == (2.5, 4.5)
+        assert processor.config.geometric.aspect_ratio_ranges[1] == (5.0, 9.0)
 
     def test_valid_image_passes_pipeline(self, sample_container_image):
         """Test that valid image passes all checks."""
@@ -150,8 +152,9 @@ class TestProcessAlignment:
         config = load_config()
 
         # Modify config to be more lenient
-        config.quality.contrast_threshold = 10
-        config.quality.sharpness_threshold = 10
+        # NOTE: Using old threshold names - M1 TODO to update types.py
+        config.quality.contrast_threshold = 10.0
+        config.quality.sharpness_threshold = 10.0
 
         result = process_alignment(image, keypoints, config=config)
 
