@@ -30,6 +30,9 @@ from .config_loader import (
     load_config,
 )
 from .corrector import CharacterCorrector, CorrectionResult
+from .engine import OCREngine, OCREngineResult
+from .layout_detector import LayoutDetector
+from .processor import OCRProcessor
 from .types import (
     DecisionStatus,
     LayoutType,
@@ -80,4 +83,6 @@ __all__ = [
     "LayoutDetector",
     "OCREngine",
     "OCREngineResult",
+    # Processor
+    "OCRProcessor",
 ]
