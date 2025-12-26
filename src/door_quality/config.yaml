@@ -1,0 +1,80 @@
+# Module 2: Image Quality Assessment Configuration
+#
+# This file defines the default parameters for the quality assessment pipeline
+# following the Task-Based Quality Assessment model from the technical specification.
+#
+# Reference: docs/modules/module-2-quality/technical-specification.md
+
+# ========== Geometric Pre-check ==========
+geometric:
+  # BBox area thresholds (ratio to image area)
+  min_bbox_area_ratio: 0.10  # Minimum 10% - container not too far
+  max_bbox_area_ratio: 0.90  # Maximum 90% - container not too close
+  
+  # Edge touching check
+  max_edge_touch_count: 2  # Max edges BBox can touch (avoid cropped images)
+
+# ========== Photometric Analysis ==========
+photometric:
+  # Brightness (Gaussian mapping)
+  # Q_B = exp(-(M_B - target)^2 / (2 * sigma^2))
+  brightness_target: 100.0  # Optimal luminance (0-255)
+  brightness_sigma: 65.0    # Tolerance bandwidth
+  brightness_threshold: 0.25  # Minimum Q_B to pass
+  
+  # Contrast (Sigmoid mapping)
+  # Q_C = 1 / (1 + exp(-k * (M_C - target)))
+  contrast_target: 50.0   # Minimum acceptable robust range
+  contrast_k: 0.1         # Sigmoid slope parameter
+  contrast_threshold: 0.30  # Minimum Q_C to pass
+
+# ========== Structural Analysis (Sharpness) ==========
+sharpness:
+  # Laplacian variance thresholds
+  laplacian_threshold: 100.0  # Threshold for M_S saturation
+  quality_threshold: 0.40     # Minimum Q_S to pass (blur detection)
+
+# ========== Statistical Analysis (BRISQUE) ==========
+naturalness:
+  # BRISQUE score thresholds
+  brisque_threshold: 80.0     # Maximum acceptable BRISQUE score
+  quality_threshold: 0.20     # Minimum Q_N to pass (noise detection)
+
+# ========== Weighted Quality Index (WQI) ==========
+# Uses Weighted Geometric Mean: WQI = ∏(Q_i + ε)^w_i
+# This ensures "veto property" - any poor component significantly reduces overall score
+# Reference: Technical Specification Section 4.2
+wqi_weights:
+  brightness: 0.2    # Can be rescued by brightness normalization
+  contrast: 0.3      # Critical for edge detection and character separation
+  sharpness: 0.4     # MOST CRITICAL - blur makes text unreadable
+  naturalness: 0.1   # Least critical - noise can be tolerated to some degree
+  
+# NOTE: Weights must sum to 1.0
+# Priority: Sharpness > Contrast > Brightness > Naturalness
+
+# ========== Notes ==========
+# 
+# Parameter Tuning Guidelines:
+# 
+# 1. Brightness (M_B = Median of Luminance):
+#    - target: 100-128 for typical lighting conditions
+#    - sigma: 40-70 (larger = more tolerant to lighting variations)
+#    - threshold: 0.20-0.30 (stricter = more rejections)
+#
+# 2. Contrast (M_C = P95 - P5):
+#    - target: 40-60 (minimum dynamic range for text readability)
+#    - k: 0.05-0.15 (larger = steeper sigmoid transition)
+#    - threshold: 0.25-0.35
+#
+# 3. Sharpness (M_S = Laplacian Variance):
+#    - laplacian_threshold: 80-150 (depends on image resolution)
+#    - quality_threshold: 0.30-0.50 (higher = stricter blur detection)
+#
+# 4. Naturalness (M_N = BRISQUE Score):
+#    - brisque_threshold: 70-90 (higher = more tolerant to noise)
+#    - quality_threshold: 0.15-0.25
+#
+# 5. WQI Weights:
+#    - Prioritize sharpness (0.4-0.6) for OCR tasks
+#    - Balance photometric (0.2-0.4) and naturalness (0.1-0.3)

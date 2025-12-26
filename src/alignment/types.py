@@ -39,8 +39,23 @@ class QualityConfig:
     """Configuration for quality assessment."""
 
     min_height_px: int
+
+    # Legacy thresholds (mapped to tau in processor)
     contrast_threshold: float
     sharpness_threshold: float
+
+    # Sigmoid parameters for contrast quality scoring
+    # Q_C = 1 / (1 + exp(-alpha_c * (M_C - tau_c)))
+    contrast_tau: float  # Inflection point (target contrast)
+    contrast_alpha: float  # Sigmoid slope (transition steepness)
+    contrast_quality_threshold: float  # Decision threshold for Q_C
+
+    # Sigmoid parameters for sharpness quality scoring
+    # Q_S = 1 / (1 + exp(-alpha_s * (M_S - tau_s)))
+    sharpness_tau: float  # Inflection point (target sharpness)
+    sharpness_alpha: float  # Sigmoid slope
+    sharpness_quality_threshold: float  # Decision threshold for Q_S
+
     sharpness_normalized_height: int
 
 
@@ -65,9 +80,11 @@ class AlignmentConfig:
 class QualityMetrics:
     """Quality assessment measurements."""
 
-    contrast: float  # Robust range (P95 - P5)
-    sharpness: float  # Variance of Laplacian
-    height_px: int  # Actual height of rectified image
+    contrast: float  # M_C: Robust range (P95 - P5)
+    sharpness: float  # M_S: Variance of Laplacian (normalized to 64px height)
+    height_px: int  # Actual height of rectified image before normalization
+    contrast_quality: float  # Q_C: Contrast quality score [0.0, 1.0] (Sigmoid mapping)
+    sharpness_quality: float  # Q_S: Sharpness quality score [0.0, 1.0] (Clipped Linear)
 
 
 @dataclass

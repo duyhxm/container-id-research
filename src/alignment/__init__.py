@@ -12,6 +12,7 @@ Pipeline stages:
 """
 
 from src.alignment.config_loader import load_config
+from src.alignment.image_rectification import extract_and_rectify_roi, order_points
 from src.alignment.processor import AlignmentProcessor, process_alignment
 from src.alignment.types import (
     AlignmentConfig,
@@ -25,6 +26,8 @@ __all__ = [
     "AlignmentProcessor",
     "process_alignment",
     "load_config",
+    "extract_and_rectify_roi",
+    "order_points",
     "AlignmentConfig",
     "AlignmentResult",
     "DecisionStatus",

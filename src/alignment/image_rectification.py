@@ -74,7 +74,71 @@ def order_points(pts: np.ndarray) -> np.ndarray:
         f"Ordered points: TL={rect[0]}, TR={rect[1]}, BR={rect[2]}, BL={rect[3]}"
     )
 
+    # H1: Validate that ordered points form a valid convex quadrilateral
+    if not _is_convex_quadrilateral(rect):
+        raise ValueError(
+            "Ordered points do not form a convex quadrilateral. "
+            "The ROI may be self-intersecting, concave, or have incorrectly ordered points. "
+            "This usually indicates a detection error."
+        )
+
     return rect
+
+
+def _is_convex_quadrilateral(rect: np.ndarray) -> bool:
+    """
+    Check if 4 ordered points form a valid convex quadrilateral.
+
+    A quadrilateral is convex if all interior angles are less than 180 degrees,
+    which is equivalent to all cross products having the same sign when traversing
+    the edges in order.
+
+    Args:
+        rect: Ordered points [TL, TR, BR, BL] with shape (4, 2).
+
+    Returns:
+        True if the quadrilateral is convex, False otherwise.
+
+    Technical Note:
+        For each consecutive edge pair (P1→P2, P2→P3), we compute the 2D cross product:
+        cross = (P2 - P1) × (P3 - P2)
+
+        If all cross products have the same sign (all positive or all negative),
+        the quadrilateral is convex. Mixed signs indicate concavity or self-intersection.
+
+    Reference:
+        Technical Specification §3.1 - Geometric Validation
+        Implementation Fix H1 - Point Ordering Validation
+    """
+    cross_products = []
+
+    # Check all 4 edges in sequence: TL→TR→BR→BL→TL
+    for i in range(4):
+        p1 = rect[i]
+        p2 = rect[(i + 1) % 4]
+        p3 = rect[(i + 2) % 4]
+
+        # Vectors for consecutive edges
+        v1 = p2 - p1  # Edge i
+        v2 = p3 - p2  # Edge i+1
+
+        # 2D cross product: v1.x * v2.y - v1.y * v2.x
+        cross = v1[0] * v2[1] - v1[1] * v2[0]
+        cross_products.append(cross)
+
+    # All cross products should have the same sign for convexity
+    # Allow small numerical errors near zero
+    signs = [cp > 1e-6 for cp in cross_products]  # True if positive
+
+    # Convex if all True (counter-clockwise) or all False (clockwise)
+    is_convex = all(signs) or not any(signs)
+
+    if not is_convex:
+        logger.warning(
+            f"Non-convex quadrilateral detected. Cross products: {cross_products}"
+        )
+
+    return is_convex
 
 
 def extract_and_rectify_roi(
@@ -164,6 +228,12 @@ def extract_and_rectify_roi(
     M = cv2.getPerspectiveTransform(rect, dst)
 
     # Apply perspective transformation
+    # Interpolation method: INTER_LINEAR (bilinear)
+    # - Balances quality (smooth edges) and computational speed
+    # - Suitable for general-purpose rectification of text regions
+    # - Better than INTER_NEAREST (produces aliasing artifacts)
+    # - Faster than INTER_CUBIC (overkill for text, minimal quality gain)
+    # - Provides smooth edges essential for OCR character boundaries
     rectified = cv2.warpPerspective(
         image, M, (max_width, max_height), flags=cv2.INTER_LINEAR
     )

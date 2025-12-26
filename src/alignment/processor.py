@@ -22,7 +22,8 @@ from src.alignment.geometric_validator import (
     calculate_predicted_dimensions,
     validate_aspect_ratio,
 )
-from src.alignment.quality_assessor import assess_quality, check_resolution
+from src.alignment.id_region_quality import assess_quality, check_resolution
+from src.alignment.image_rectification import extract_and_rectify_roi
 from src.alignment.types import (
     AlignmentConfig,
     AlignmentResult,
@@ -30,7 +31,6 @@ from src.alignment.types import (
     QualityMetrics,
     RejectionReason,
 )
-from src.utils.image_rectification import extract_and_rectify_roi
 
 logger = logging.getLogger(__name__)
 
@@ -123,6 +123,27 @@ class AlignmentProcessor:
                 aspect_ratio=aspect_ratio,
             )
 
+        # Stage 1.5: H2 - Pre-Rectification Resolution Check (Fail-Fast Optimization)
+        logger.info("[Stage 1.5/4] Pre-Rectification Resolution Estimate")
+        if predicted_height < self.config.quality.min_height_px:
+            logger.warning(
+                f"Pipeline REJECTED at Stage 1.5: Predicted height {predicted_height:.1f}px "
+                f"< minimum {self.config.quality.min_height_px}px. "
+                "Skipping expensive warpPerspective operation."
+            )
+            return AlignmentResult(
+                decision=DecisionStatus.REJECT,
+                rectified_image=None,
+                metrics=None,
+                rejection_reason=RejectionReason.LOW_RESOLUTION,
+                predicted_width=predicted_width,
+                predicted_height=predicted_height,
+                aspect_ratio=aspect_ratio,
+            )
+        logger.info(
+            f"Predicted height {predicted_height:.1f}px >= minimum {self.config.quality.min_height_px}px, proceeding to rectification"
+        )
+
         # Stage 2: Perspective Rectification
         logger.info("[Stage 2/4] Perspective Rectification")
         try:
@@ -169,17 +190,25 @@ class AlignmentProcessor:
             if len(rectified_image.shape) == 3:
                 image_for_quality = cv2.cvtColor(rectified_image, cv2.COLOR_BGR2GRAY)
 
-        passes_quality, contrast, sharpness = assess_quality(
-            image_for_quality,
-            self.config.quality.contrast_threshold,
-            self.config.quality.sharpness_threshold,
-            self.config.quality.sharpness_normalized_height,
+        passes_quality, contrast, sharpness, contrast_quality, sharpness_quality = (
+            assess_quality(
+                image_for_quality,
+                contrast_tau=self.config.quality.contrast_tau,
+                contrast_alpha=self.config.quality.contrast_alpha,
+                contrast_q_threshold=self.config.quality.contrast_quality_threshold,
+                sharpness_tau=self.config.quality.sharpness_tau,
+                sharpness_alpha=self.config.quality.sharpness_alpha,
+                sharpness_q_threshold=self.config.quality.sharpness_quality_threshold,
+                normalize_height=self.config.quality.sharpness_normalized_height,
+            )
         )
 
         metrics = QualityMetrics(
             contrast=contrast,
             sharpness=sharpness,
             height_px=actual_height,
+            contrast_quality=contrast_quality,
+            sharpness_quality=sharpness_quality,
         )
 
         if not passes_quality:

@@ -9,13 +9,13 @@
 geometric:
   # Aspect Ratio (Width / Height) acceptable ranges
   # Based on ISO 6346 container ID format (horizontal text, 1-2 lines)
-  # Supports multiple ranges: e.g., [[2.0, 3.0], [5.0, 9.0]]
-  # Each range is [min, max] inclusive
+  # Uses BIMODAL distribution based on real container ID layouts:
+  # - Mode 1: [2.5, 4.5] - Multi-line layout (2 rows of text)
+  # - Mode 2: [5.0, 9.0] - Single-line layout (1 row of text)
+  # Gap [4.5, 5.0] intentionally rejects ambiguous layouts
   aspect_ratio_ranges:
-    - [1.5, 10.0]  # Default: single wide range
-  # Alternative examples:
-  # - [2.0, 3.0]   # For single-line IDs
-  # - [5.0, 9.0]   # For very wide formats
+    - [2.5, 4.5]  # Mode 1: Multi-line format
+    - [5.0, 9.0]  # Mode 2: Single-line format
 
 # Visual Quality Thresholds
 quality:
@@ -26,10 +26,22 @@ quality:
   # Local Contrast: Robust range (P95 - P5) on grayscale histogram
   # Higher than Module 2 due to stricter text requirements
   contrast_threshold: 50
+  
+  # Sigmoid parameters for contrast quality scoring
+  # Q_C = 1 / (1 + exp(-alpha_c * (M_C - tau_c)))
+  contrast_tau: 50.0      # Inflection point (target contrast)
+  contrast_alpha: 0.1     # Sigmoid slope (transition steepness)
+  contrast_quality_threshold: 0.5  # Decision threshold for Q_C
 
   # Stroke Sharpness: Variance of Laplacian on normalized image
   # Measures edge crispness of character strokes
   sharpness_threshold: 100
+  
+  # Sigmoid parameters for sharpness quality scoring
+  # Q_S = 1 / (1 + exp(-alpha_s * (M_S - tau_s)))
+  sharpness_tau: 100.0    # Inflection point (target sharpness)
+  sharpness_alpha: 0.05   # Sigmoid slope (slower transition than contrast)
+  sharpness_quality_threshold: 0.5  # Decision threshold for Q_S
 
   # Normalized height for sharpness calculation (to ensure consistency)
   sharpness_normalized_height: 64

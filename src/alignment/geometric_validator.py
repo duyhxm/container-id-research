@@ -141,8 +141,10 @@ def validate_aspect_ratio(
     aspect_ratio = calculate_aspect_ratio(keypoints)
 
     # Check if ratio falls within any of the ranges
+    # Use small epsilon tolerance for floating point comparison at boundaries
+    EPSILON = 1e-6
     is_valid = any(
-        min_ratio <= aspect_ratio <= max_ratio
+        min_ratio - EPSILON <= aspect_ratio <= max_ratio + EPSILON
         for min_ratio, max_ratio in acceptable_ranges
     )
 

@@ -73,6 +73,16 @@ def _parse_config(raw: Dict[str, Any]) -> AlignmentConfig:
             min_height_px=int(raw["quality"]["min_height_px"]),
             contrast_threshold=float(raw["quality"]["contrast_threshold"]),
             sharpness_threshold=float(raw["quality"]["sharpness_threshold"]),
+            contrast_tau=float(raw["quality"]["contrast_tau"]),
+            contrast_alpha=float(raw["quality"]["contrast_alpha"]),
+            contrast_quality_threshold=float(
+                raw["quality"]["contrast_quality_threshold"]
+            ),
+            sharpness_tau=float(raw["quality"]["sharpness_tau"]),
+            sharpness_alpha=float(raw["quality"]["sharpness_alpha"]),
+            sharpness_quality_threshold=float(
+                raw["quality"]["sharpness_quality_threshold"]
+            ),
             sharpness_normalized_height=int(
                 raw["quality"]["sharpness_normalized_height"]
             ),
