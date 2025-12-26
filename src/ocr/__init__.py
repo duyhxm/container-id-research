@@ -29,6 +29,7 @@ from .config_loader import (
     get_default_config,
     load_config,
 )
+from .corrector import CharacterCorrector, CorrectionResult
 from .types import (
     DecisionStatus,
     LayoutType,
@@ -72,4 +73,7 @@ __all__ = [
     "validate_owner_code",
     "validate_serial_number",
     "normalize_container_id",
+    # Correction
+    "CharacterCorrector",
+    "CorrectionResult",
 ]
