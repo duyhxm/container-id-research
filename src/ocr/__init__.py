@@ -76,4 +76,8 @@ __all__ = [
     # Correction
     "CharacterCorrector",
     "CorrectionResult",
+    # Layout & Engine
+    "LayoutDetector",
+    "OCREngine",
+    "OCREngineResult",
 ]
