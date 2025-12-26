@@ -1,0 +1,44 @@
+# Alignment Module Configuration
+# Module 4: ROI Rectification & Fine-Grained Quality Assessment
+#
+# This file contains all tunable thresholds for the alignment pipeline.
+# These values should be adjusted through experimental validation using
+# the alignment demo/web app.
+
+# Geometric Validation Thresholds
+geometric:
+  # Aspect Ratio (Width / Height) acceptable ranges
+  # Based on ISO 6346 container ID format (horizontal text, 1-2 lines)
+  # Supports multiple ranges: e.g., [[2.0, 3.0], [5.0, 9.0]]
+  # Each range is [min, max] inclusive
+  aspect_ratio_ranges:
+    - [1.5, 10.0]  # Default: single wide range
+  # Alternative examples:
+  # - [2.0, 3.0]   # For single-line IDs
+  # - [5.0, 9.0]   # For very wide formats
+
+# Visual Quality Thresholds
+quality:
+  # Minimum character height in pixels for OCR readability
+  # Below this, OCR engines (Paddle/Tesseract) degrade significantly
+  min_height_px: 25
+
+  # Local Contrast: Robust range (P95 - P5) on grayscale histogram
+  # Higher than Module 2 due to stricter text requirements
+  contrast_threshold: 50
+
+  # Stroke Sharpness: Variance of Laplacian on normalized image
+  # Measures edge crispness of character strokes
+  sharpness_threshold: 100
+
+  # Normalized height for sharpness calculation (to ensure consistency)
+  sharpness_normalized_height: 64
+
+# Processing Options
+processing:
+  # Convert to grayscale for quality checks (recommended for text)
+  use_grayscale_for_quality: true
+
+  # Interpolation method for perspective warp
+  # Options: "linear" (cv2.INTER_LINEAR), "cubic" (cv2.INTER_CUBIC)
+  warp_interpolation: "linear"
