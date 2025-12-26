@@ -1,0 +1,97 @@
+# OCR Module Configuration
+
+# ============================================================================
+# ENGINE CONFIGURATION
+# ============================================================================
+engine:
+  # OCR engine type (currently only "rapidocr" supported)
+  type: "rapidocr"
+  
+  # Enable angle classification (corrects rotated text)
+  use_angle_cls: true
+  
+  # Use GPU acceleration if available
+  use_gpu: true
+  
+  # Minimum text detection confidence score (0.0-1.0)
+  text_score: 0.5
+  
+  # Language code for OCR model
+  lang: "en"
+
+# ============================================================================
+# THRESHOLD CONFIGURATION
+# ============================================================================
+thresholds:
+  # Minimum OCR confidence to accept result (0.0-1.0)
+  min_confidence: 0.7
+  
+  # Minimum validation confidence after all checks (0.0-1.0)
+  min_validation_confidence: 0.7
+  
+  # Aspect ratio threshold for layout detection
+  # Values > this are considered single-line, <= are multi-line
+  layout_aspect_ratio: 5.0
+
+# ============================================================================
+# LAYOUT DETECTION CONFIGURATION
+# ============================================================================
+layout:
+  # Single-line layout aspect ratio range
+  single_line_aspect_ratio_min: 5.0
+  single_line_aspect_ratio_max: 9.0
+  
+  # Multi-line layout aspect ratio range
+  multi_line_aspect_ratio_min: 2.5
+  multi_line_aspect_ratio_max: 4.5
+
+# ============================================================================
+# CHARACTER CORRECTION CONFIGURATION
+# ============================================================================
+correction:
+  # Enable domain-aware character correction
+  enabled: true
+  
+  # Correction rules (position-dependent)
+  rules:
+    # Owner code corrections (positions 1-4: letters only)
+    # Maps commonly confused digits to letters
+    owner_code:
+      "0": "O"  # Zero to letter O
+      "1": "I"  # One to letter I
+      "5": "S"  # Five to letter S
+      "8": "B"  # Eight to letter B
+    
+    # Serial number corrections (positions 5-11: digits only)
+    # Maps commonly confused letters to digits
+    serial:
+      "O": "0"  # Letter O to zero
+      "I": "1"  # Letter I to one
+      "S": "5"  # Letter S to five
+      "B": "8"  # Letter B to eight
+
+# ============================================================================
+# CHECK DIGIT VALIDATION CONFIGURATION
+# ============================================================================
+check_digit:
+  # Enable ISO 6346 check digit validation
+  enabled: true
+  
+  # Attempt to correct check digit errors
+  attempt_correction: true
+  
+  # Maximum number of character substitutions to try for correction
+  max_correction_attempts: 10
+
+# ============================================================================
+# OUTPUT CONFIGURATION
+# ============================================================================
+output:
+  # Include raw OCR text in result
+  include_raw_text: true
+  
+  # Include bounding box coordinates in result
+  include_bounding_boxes: true
+  
+  # Include per-character confidence scores in result
+  include_character_confidences: true
