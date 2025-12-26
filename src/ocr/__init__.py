@@ -6,6 +6,7 @@ images and validates the extracted text against ISO 6346 standard.
 Core Components:
     - types: Data structures (OCRResult, ValidationMetrics, etc.)
     - config_loader: Configuration loading with Pydantic validation
+    - validator: ISO 6346 check digit and format validation
     - processor: Main OCR processing pipeline (coming in Phase 5)
 
 Example:
@@ -36,6 +37,14 @@ from .types import (
     RejectionReason,
     ValidationMetrics,
 )
+from .validator import (
+    calculate_check_digit,
+    normalize_container_id,
+    validate_check_digit,
+    validate_format,
+    validate_owner_code,
+    validate_serial_number,
+)
 
 __all__ = [
     # Types
@@ -56,4 +65,11 @@ __all__ = [
     "OutputConfig",
     "load_config",
     "get_default_config",
+    # Validation
+    "calculate_check_digit",
+    "validate_check_digit",
+    "validate_format",
+    "validate_owner_code",
+    "validate_serial_number",
+    "normalize_container_id",
 ]
