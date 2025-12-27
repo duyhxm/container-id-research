@@ -20,6 +20,9 @@ class OCREngineConfig(BaseModel):
         use_gpu: Use GPU acceleration if available
         text_score: Minimum text detection confidence (0.0-1.0)
         lang: Language code for OCR model
+        det_db_box_thresh: Detection box filtering threshold (0.0-1.0)
+        det_db_thresh: Detection threshold (0.0-1.0)
+        det_limit_side_len: Maximum side length for detection image
     """
 
     type: str = "rapidocr"
@@ -27,6 +30,9 @@ class OCREngineConfig(BaseModel):
     use_gpu: bool = True
     text_score: float = 0.5
     lang: str = "en"
+    det_db_box_thresh: float = 0.5
+    det_db_thresh: float = 0.3
+    det_limit_side_len: int = 960
 
 
 class ThresholdsConfig(BaseModel):
@@ -166,7 +172,8 @@ def load_config(config_path: Path) -> Config:
     with open(config_path, "r", encoding="utf-8") as f:
         config_dict = yaml.safe_load(f)
 
-    return Config(**config_dict)
+    # Wrap flat YAML structure in 'ocr' key for Config model
+    return Config(ocr=OCRModuleConfig(**config_dict))
 
 
 def get_default_config() -> Config:

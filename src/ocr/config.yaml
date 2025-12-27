@@ -14,10 +14,23 @@ engine:
   use_gpu: true
   
   # Minimum text detection confidence score (0.0-1.0)
-  text_score: 0.5
+  # Lower threshold (0.3) for better text detection on challenging images
+  text_score: 0.2
   
   # Language code for OCR model
   lang: "en"
+  
+  # Detection box threshold (0.0-1.0)
+  # Lower = more sensitive, detects smaller/fainter text
+  det_db_box_thresh: 0.5
+  
+  # Detection threshold (0.0-1.0)
+  # Lower = more sensitive detection
+  det_db_thresh: 0.3
+  
+  # Maximum side length for detection image
+  # Larger = can detect smaller text but slower
+  det_limit_side_len: 960
 
 # ============================================================================
 # THRESHOLD CONFIGURATION
@@ -82,6 +95,35 @@ check_digit:
   
   # Maximum number of character substitutions to try for correction
   max_correction_attempts: 10
+
+# ============================================================================
+# PREPROCESSING CONFIGURATION
+# ============================================================================
+preprocessing:
+  # Minimum height for OCR (resize smaller images to this height)
+  # RapidOCR performs better with larger text (>= 32px character height)
+  # Increased to 96px for better character detection
+  min_height: 96
+  
+  # Enable automatic resize for small images
+  auto_resize: true
+  
+  # Interpolation method for upscaling: "linear" or "cubic"
+  # linear: Faster, good quality for text
+  # cubic: Slower, slightly better quality
+  upscale_interpolation: "linear"
+  
+  # Enable CLAHE (Contrast Limited Adaptive Histogram Equalization)
+  # Improves contrast for low-quality images
+  enable_clahe: false
+  clahe_clip_limit: 2.0
+  clahe_tile_size: 8
+  
+  # Enable adaptive thresholding (binarization)
+  # Converts grayscale to pure black/white
+  enable_threshold: false
+  threshold_block_size: 11
+  threshold_c: 2
 
 # ============================================================================
 # OUTPUT CONFIGURATION

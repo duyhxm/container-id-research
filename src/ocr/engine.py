@@ -108,12 +108,25 @@ class OCREngine:
             try:
                 from rapidocr_onnxruntime import RapidOCR
 
+                # Initialize with detection parameters for better small text detection
                 self._engine = RapidOCR(
                     use_angle_cls=self.config.use_angle_cls,
                     use_gpu=self.config.use_gpu,
                     text_score=self.config.text_score,
+                    det_db_box_thresh=self.config.det_db_box_thresh,
+                    det_db_thresh=self.config.det_db_thresh,
+                    det_limit_side_len=self.config.det_limit_side_len,
+                    use_space_char=True,  # Preserve spaces between words
+                    return_word_box=True,  # Return word-level boxes instead of line-level
                 )
-                logger.info("RapidOCR engine loaded successfully")
+                logger.info(
+                    f"RapidOCR engine loaded with parameters: "
+                    f"text_score={self.config.text_score}, "
+                    f"det_db_box_thresh={self.config.det_db_box_thresh}, "
+                    f"det_db_thresh={self.config.det_db_thresh}, "
+                    f"det_limit_side_len={self.config.det_limit_side_len}, "
+                    f"return_word_box=True"
+                )
 
             except ImportError as e:
                 logger.error(
@@ -192,9 +205,11 @@ class OCREngine:
             # Run RapidOCR inference
             result = self.engine(image)
 
-            # RapidOCR returns: (bboxes, texts, confidences) or None
+            # RapidOCR returns: (detections, elapse) tuple
+            # detections: [[bbox, text, confidence], ...]
+            # elapse: [det_time, cls_time, rec_time]
             if result is None or len(result) == 0:
-                logger.warning("RapidOCR returned no text")
+                logger.warning("RapidOCR returned no result")
                 return OCREngineResult(
                     text="",
                     confidence=0.0,
@@ -203,11 +218,35 @@ class OCREngine:
                     success=False,
                 )
 
-            # Parse RapidOCR output
-            bboxes, texts, confidences = result
+            # Extract detections (first element of tuple)
+            detections = result[0] if isinstance(result, tuple) else result
+
+            if not detections or len(detections) == 0:
+                logger.warning("RapidOCR returned no text detections")
+                return OCREngineResult(
+                    text="",
+                    confidence=0.0,
+                    character_confidences=[],
+                    bounding_boxes=[],
+                    success=False,
+                )
+
+            # Parse detections: each item is [bbox, text, confidence]
+            bboxes = []
+            texts = []
+            confidences = []
+
+            for detection in detections:
+                if len(detection) >= 3:
+                    bbox, text, conf = detection[0], detection[1], detection[2]
+                    bboxes.append(bbox)
+                    texts.append(str(text))
+                    confidences.append(float(conf))
+                else:
+                    logger.warning(f"Unexpected detection format: {detection}")
 
             if len(texts) == 0:
-                logger.warning("No text detected by RapidOCR")
+                logger.warning("No valid text extracted from detections")
                 return OCREngineResult(
                     text="",
                     confidence=0.0,
@@ -215,6 +254,20 @@ class OCREngine:
                     bounding_boxes=[],
                     success=False,
                 )
+
+            # Sort detections by X-coordinate (left-to-right reading order)
+            # bbox format: [[x1,y1], [x2,y2], [x3,y3], [x4,y4]]
+            # Use leftmost X-coordinate (min of all X values)
+            sorted_indices = sorted(
+                range(len(bboxes)), key=lambda i: min(point[0] for point in bboxes[i])
+            )
+
+            # Reorder all lists by sorted X-coordinates
+            bboxes = [bboxes[i] for i in sorted_indices]
+            texts = [texts[i] for i in sorted_indices]
+            confidences = [confidences[i] for i in sorted_indices]
+
+            logger.debug(f"Sorted {len(texts)} text regions by X-coordinate: {texts}")
 
             # Aggregate text based on layout type
             aggregated_text = self._aggregate_text(texts, layout_type)
@@ -272,7 +325,13 @@ class OCREngine:
 
         # For container IDs, joining with space is generally safe
         # since normalization will remove spaces later
-        aggregated = " ".join(texts)
+        # BUT: Remove spaces within detected text first (e.g., "M S K U" -> "MSKU")
+        cleaned_texts = [text.replace(" ", "") for text in texts]
+
+        # Join all cleaned text fragments
+        aggregated = "".join(cleaned_texts)
+
+        logger.debug(f"Text aggregation: {texts} -> '{aggregated}'")
 
         logger.debug(
             f"Aggregated {len(texts)} regions into: '{aggregated}' "

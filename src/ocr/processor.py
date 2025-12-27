@@ -15,10 +15,12 @@ Example:
     ...     print(f"Extracted: {result.container_id}")
 """
 
+import logging
 import time
 from pathlib import Path
 from typing import Optional
 
+import cv2
 import numpy as np
 
 from src.alignment.types import AlignmentResult
@@ -28,6 +30,8 @@ from .config_loader import Config, get_default_config, load_config
 from .corrector import CharacterCorrector
 from .engine import OCREngine
 from .layout_detector import LayoutDetector
+
+logger = logging.getLogger(__name__)
 from .types import (
     DecisionStatus,
     LayoutType,
@@ -186,9 +190,93 @@ class OCRProcessor:
             aspect_ratio=alignment_result.aspect_ratio
         )
 
+        # Convert to grayscale for better OCR performance
+        # RapidOCR works best with grayscale images
+        import cv2
+
+        rectified_image = alignment_result.rectified_image
+        if len(rectified_image.shape) == 3 and rectified_image.shape[2] == 3:
+            rectified_gray = cv2.cvtColor(rectified_image, cv2.COLOR_BGR2GRAY)
+        else:
+            rectified_gray = rectified_image
+
+        # Preprocessing: Resize small images for better OCR
+        # Similar to Module 4's sharpness normalization approach
+        h, w = rectified_gray.shape
+        min_height = getattr(self.config.ocr, "preprocessing", {}).get("min_height", 64)
+        auto_resize = getattr(self.config.ocr, "preprocessing", {}).get(
+            "auto_resize", True
+        )
+
+        if auto_resize and h < min_height:
+            # Calculate new dimensions maintaining aspect ratio
+            aspect_ratio = w / h
+            new_height = min_height
+            new_width = int(new_height * aspect_ratio)
+
+            # Use INTER_LINEAR for upscaling (same as Module 4)
+            rectified_gray = cv2.resize(
+                rectified_gray,
+                (new_width, new_height),
+                interpolation=cv2.INTER_LINEAR,
+            )
+
+            logger.info(
+                f"Resized image from {w}x{h} to {new_width}x{new_height} "
+                f"for better OCR performance (min_height={min_height}px)"
+            )
+
+        # Apply CLAHE for contrast enhancement (improves OCR on low-contrast images)
+        enable_clahe = getattr(self.config.ocr, "preprocessing", {}).get(
+            "enable_clahe", True
+        )
+        if enable_clahe:
+            clip_limit = getattr(self.config.ocr, "preprocessing", {}).get(
+                "clahe_clip_limit", 2.0
+            )
+            tile_size = getattr(self.config.ocr, "preprocessing", {}).get(
+                "clahe_tile_size", 8
+            )
+            clahe = cv2.createCLAHE(
+                clipLimit=clip_limit, tileGridSize=(tile_size, tile_size)
+            )
+            rectified_gray = clahe.apply(rectified_gray)
+            logger.info(
+                f"Applied CLAHE contrast enhancement "
+                f"(clip_limit={clip_limit}, tile_size={tile_size})"
+            )
+
+        # Optional: Apply adaptive thresholding (binarization)
+        enable_threshold = getattr(self.config.ocr, "preprocessing", {}).get(
+            "enable_threshold", False
+        )
+        if enable_threshold:
+            block_size = getattr(self.config.ocr, "preprocessing", {}).get(
+                "threshold_block_size", 11
+            )
+            c = getattr(self.config.ocr, "preprocessing", {}).get("threshold_c", 2)
+            rectified_gray = cv2.adaptiveThreshold(
+                rectified_gray,
+                255,
+                cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                cv2.THRESH_BINARY,
+                block_size,
+                c,
+            )
+            logger.info(
+                f"Applied adaptive thresholding " f"(block_size={block_size}, C={c})"
+            )
+
+        # DEBUG: Save preprocessed image for inspection
+        debug_dir = Path("artifacts/ocr/debug")
+        debug_dir.mkdir(parents=True, exist_ok=True)
+        debug_path = debug_dir / f"preprocessed_{int(time.time() * 1000)}.png"
+        cv2.imwrite(str(debug_path), rectified_gray)
+        logger.info(f"Saved preprocessed image to {debug_path} for inspection")
+
         # Extract text using OCR engine
         ocr_result = self.engine.extract_text(
-            image=alignment_result.rectified_image, layout_type=layout_type
+            image=rectified_gray, layout_type=layout_type
         )
 
         # Check if OCR succeeded
