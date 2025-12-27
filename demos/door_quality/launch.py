@@ -65,12 +65,19 @@ def launch_demo() -> None:
         print("\n[ERROR] Environment verification failed. Please fix the issues above.")
         sys.exit(1)
 
+    # Import port from centralized config
+    from demos.ports_config import get_port, get_url
+
+    port = get_port("quality")
+    url = get_url("quality")
+
     print("\nLaunching Quality Lab demo...")
+    print(f"Server URL: {url}")
     print("Press Ctrl+C to stop the server\n")
 
     # Launch Streamlit
     app_path = Path(__file__).parent / "app.py"
-    subprocess.run(["streamlit", "run", str(app_path)])
+    subprocess.run(["streamlit", "run", str(app_path), f"--server.port={port}"])
 
 
 if __name__ == "__main__":

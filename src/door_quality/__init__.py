@@ -45,7 +45,12 @@ from .photometric_assessor import (
     calculate_contrast_metric,
     contrast_quality_sigmoid,
 )
-from .processor import QualityAssessor, assess_quality, check_geometric_validity
+from .processor import (
+    QualityAssessor,
+    QualityProcessor,
+    assess_quality,
+    check_geometric_validity,
+)
 from .sharpness_assessor import (
     assess_sharpness,
     calculate_sharpness_metric,
@@ -70,6 +75,7 @@ __all__ = [
     # Main API
     "assess_quality",
     "QualityAssessor",
+    "QualityProcessor",
     # Enums
     "DecisionStatus",
     "RejectionReason",

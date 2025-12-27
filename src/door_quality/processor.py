@@ -506,3 +506,33 @@ def assess_quality(
     """
     assessor = QualityAssessor(config=config)
     return assessor.assess(image, bbox)
+
+
+class QualityProcessor:
+    """
+    Wrapper class for quality assessment pipeline (Module 2).
+
+    Provides a consistent interface matching other modules (Detection, Localization, etc.)
+    """
+
+    def __init__(self, config: Optional[QualityConfig] = None):
+        """
+        Initialize quality processor.
+
+        Args:
+            config: Quality configuration (uses default if None)
+        """
+        self.config = config
+
+    def process(self, image: np.ndarray, bbox: List[float]) -> QualityResult:
+        """
+        Assess image quality for the given bounding box.
+
+        Args:
+            image: Input image (BGR format from cv2.imread)
+            bbox: Bounding box [x1, y1, x2, y2] from detection module
+
+        Returns:
+            QualityResult with decision, metrics, and rejection reason
+        """
+        return assess_quality(image, bbox, config=self.config)

@@ -137,9 +137,24 @@ def launch_demo() -> None:
     logger.info("=" * 60)
 
     try:
+        # Import port from centralized config
+        from demos.ports_config import get_port, get_url
+
+        port = get_port("alignment")
+        url = get_url("alignment")
+        logger.info(f"Server will start at: {url}")
+
         # Launch Streamlit
         subprocess.run(
-            [sys.executable, "-m", "streamlit", "run", str(app_path)], check=True
+            [
+                sys.executable,
+                "-m",
+                "streamlit",
+                "run",
+                str(app_path),
+                f"--server.port={port}",
+            ],
+            check=True,
         )
     except subprocess.CalledProcessError as e:
         logger.error(f"Failed to launch Streamlit: {e}")

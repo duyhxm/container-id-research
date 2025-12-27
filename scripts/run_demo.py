@@ -1,15 +1,33 @@
 """
-Demo Launcher Script for Module 1: Container Door Detection
+Unified Demo Launcher for All Modules.
 
-This script prepares the demo environment and launches the Gradio interface.
-It automatically populates example images from the test dataset.
+This script provides a command-line interface to launch demos for any module.
+
+Usage:
+    # Launch Module 1 (Detection) demo
+    python scripts/run_demo.py --module det
+
+    # Launch Module 2 (Door Quality) demo
+    python scripts/run_demo.py --module door-quality
+
+    # Launch Module 3 (Localization) demo
+    python scripts/run_demo.py --module loc
+
+    # Launch Module 4 (Alignment) demo
+    python scripts/run_demo.py --module align
+
+    # Custom server settings
+    python scripts/run_demo.py --module loc --port 7862 --share
 """
 
+import argparse
 import logging
-import random
-import shutil
+import sys
 from pathlib import Path
-from typing import List
+
+# Add project root to path
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
 
 # Configure logging
 logging.basicConfig(
@@ -17,141 +35,107 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Project paths
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-TEST_IMAGES_DIR = PROJECT_ROOT / "data" / "processed" / "detection" / "images" / "test"
-DEMO_EXAMPLES_DIR = PROJECT_ROOT / "demos" / "det" / "examples"
 
+def main():
+    """Main entry point for demo launcher."""
+    parser = argparse.ArgumentParser(
+        description="Launch demo for specified module",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Launch Module 1 (Detection) demo
+  python scripts/run_demo.py --module det
 
-def populate_examples(
-    source_dir: Path, target_dir: Path, num_examples: int = 5
-) -> None:
-    """
-    Populate demo examples directory with sample images from test dataset.
+  # Launch Module 2 (Door Quality) demo
+  python scripts/run_demo.py --module door-quality
 
-    Args:
-        source_dir: Directory containing test images
-        target_dir: Directory to copy examples to
-        num_examples: Number of example images to copy (default: 5)
+  # Launch Module 3 (Localization) demo
+  python scripts/run_demo.py --module loc
 
-    Raises:
-        FileNotFoundError: If source directory does not exist
-        ValueError: If no images found in source directory
-    """
-    if not source_dir.exists():
-        error_msg = (
-            f"Test images directory not found at {source_dir}\n\n"
-            "Please ensure the dataset is prepared:\n"
-            "  dvc pull data/processed/detection"
-        )
-        logger.error(error_msg)
-        raise FileNotFoundError(error_msg)
+  # Launch Module 4 (Alignment) demo
+  python scripts/run_demo.py --module align
 
-    # Get all .jpg images from test directory
-    test_images = list(source_dir.glob("*.jpg"))
+  # Custom server settings
+  python scripts/run_demo.py --module loc --port 7862 --share
+        """,
+    )
 
-    if not test_images:
-        error_msg = f"No .jpg images found in {source_dir}"
-        logger.error(error_msg)
-        raise ValueError(error_msg)
+    parser.add_argument(
+        "--module",
+        type=str,
+        required=True,
+        choices=["det", "loc", "door-quality", "align"],
+        help="Module to demo (det: detection, loc: localization, door-quality: door quality, align: alignment)",
+    )
 
-    logger.info(f"Found {len(test_images)} test images")
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=None,
+        help="Server port (default: 7860 for det, 7861 for loc)",
+    )
 
-    # Check if examples directory needs population
-    existing_examples = list(target_dir.glob("*.jpg"))
+    parser.add_argument(
+        "--share",
+        action="store_true",
+        help="Create public shareable link (default: False)",
+    )
 
-    if existing_examples:
-        logger.info(
-            f"Examples directory already contains {len(existing_examples)} "
-            f"images. Skipping population."
-        )
-        return
+    parser.add_argument(
+        "--server",
+        type=str,
+        default="127.0.0.1",
+        help="Server address (default: 127.0.0.1)",
+    )
 
-    # Ensure target directory exists
-    target_dir.mkdir(parents=True, exist_ok=True)
+    args = parser.parse_args()
 
-    # Randomly select images
-    num_to_copy = min(num_examples, len(test_images))
-    selected_images = random.sample(test_images, num_to_copy)
+    # Module configuration
+    module_config = {
+        "det": {
+            "name": "Module 1: Container Door Detection",
+            "launch_script": "demos.det.launch",
+            "default_port": 7860,
+        },
+        "loc": {
+            "name": "Module 3: Container ID Localization",
+            "launch_script": "demos.loc.launch",
+            "default_port": 7861,
+        },
+        "door-quality": {
+            "name": "Module 2: Door Quality Assessment",
+            "launch_script": "demos.door_quality.launch",
+            "default_port": 7862,
+        },
+        "align": {
+            "name": "Module 4: ID Region Alignment",
+            "launch_script": "demos.align.launch",
+            "default_port": 7863,
+        },
+    }
 
-    logger.info(f"Copying {num_to_copy} example images to {target_dir}")
+    config = module_config[args.module]
+    port = args.port if args.port is not None else config["default_port"]
 
-    # Copy selected images
-    for i, src_image in enumerate(selected_images, 1):
-        dest_image = target_dir / src_image.name
-        try:
-            shutil.copy2(src_image, dest_image)
-            logger.info(f"  [{i}/{num_to_copy}] Copied {src_image.name}")
-        except Exception as e:
-            logger.warning(f"Failed to copy {src_image.name}: {e}")
-
-    logger.info(f"Successfully populated {num_to_copy} example images")
-
-
-def verify_model_exists(model_path: Path) -> bool:
-    """
-    Verify that the trained model checkpoint exists.
-
-    Args:
-        model_path: Path to the model checkpoint
-
-    Returns:
-        True if model exists, False otherwise
-    """
-    if model_path.exists():
-        logger.info(f"Model found at {model_path}")
-        return True
-    else:
-        logger.warning(
-            f"Model not found at {model_path}\n\n"
-            "Please train the model or pull from DVC:\n"
-            "  dvc pull weights/detection/best.pt.dvc"
-        )
-        return False
-
-
-def main() -> None:
-    """
-    Main execution function.
-
-    Prepares the demo environment and launches the Gradio interface.
-    """
     logger.info("=" * 60)
-    logger.info("Container Door Detection Demo - Launcher")
+    logger.info(f"Container ID Research - Demo Launcher")
+    logger.info("=" * 60)
+    logger.info(f"Module: {config['name']}")
+    logger.info(f"Server: http://{args.server}:{port}")
+    logger.info(f"Share: {args.share}")
     logger.info("=" * 60)
 
-    # Step 1: Verify model exists
-    model_path = PROJECT_ROOT / "weights" / "detection" / "best.pt"
-    if not verify_model_exists(model_path):
-        logger.error("Cannot launch demo without trained model. Exiting.")
-        return
-
-    # Step 2: Populate example images
     try:
-        logger.info("\nStep 1: Populating example images...")
-        populate_examples(
-            source_dir=TEST_IMAGES_DIR, target_dir=DEMO_EXAMPLES_DIR, num_examples=5
-        )
-    except (FileNotFoundError, ValueError) as e:
-        logger.error(f"Failed to populate examples: {e}")
-        logger.warning(
-            "Demo will launch without example images. "
-            "You can still upload images manually."
-        )
+        # Dynamic import and launch
+        module_path = config["launch_script"]
+        module = __import__(module_path, fromlist=["main"])
 
-    # Step 3: Launch Gradio app
-    try:
-        logger.info("\nStep 2: Launching Gradio interface...")
-        logger.info("=" * 60)
-
-        # Import and launch demo
-        from demos.det.app import launch_demo
-
-        launch_demo(server_name="127.0.0.1", server_port=7860, share=False)
+        logger.info(f"Launching {config['name']}...\n")
+        module.main()
 
     except Exception as e:
         logger.error(f"Failed to launch demo: {e}")
-        raise
+        sys.exit(1)
 
 
 if __name__ == "__main__":
