@@ -14,16 +14,21 @@ import re
 def calculate_check_digit(container_id_prefix: str) -> int:
     """Calculate ISO 6346 check digit for first 10 characters.
 
-    The check digit is calculated using a weighted sum algorithm:
-    1. Map each character to a numeric value (A=10, B=11, ..., Z=35 for letters;
-       0-9 map to themselves for digits)
-    2. Apply modulo 10 to letter values (10→0, 11→1, ..., 35→5)
-    3. Multiply each value by position weight (powers of 2: 1, 2, 4, 8, ...)
-    4. Sum all products and apply: check_digit = (sum mod 11) mod 10
+    The check digit is calculated using ISO 6346 algorithm with special mapping:
+    1. Map each character to a numeric value:
+       - Digits (0-9): Use their numeric value
+       - Letters (A-Z): Use position-based values SKIPPING multiples of 11:
+         * A=10, B=12, C=13, ..., K=21 (skip 11)
+         * L=23, M=24, ..., U=32 (skip 22)
+         * V=34, W=35, X=36, Y=37, Z=38 (skip 33)
+    2. Multiply each value by position weight (powers of 2: 1, 2, 4, 8, ...)
+    3. Sum all products
+    4. Check digit = (sum mod 11) mod 10
+       Special case: If (sum mod 11) = 10, check digit = 0
 
     Args:
         container_id_prefix: First 10 characters of container ID
-                           (4-letter owner code + 6-digit serial number)
+                           (3-letter owner code + 1 category + 6-digit serial)
 
     Returns:
         Check digit (0-9)
@@ -35,21 +40,48 @@ def calculate_check_digit(container_id_prefix: str) -> int:
     Example:
         >>> calculate_check_digit("CSQU305438")
         3
-        >>> calculate_check_digit("MSKU123456")
-        7
+        >>> calculate_check_digit("BMOU166640")
+        3
     """
     if len(container_id_prefix) != 10:
         raise ValueError(f"Expected 10 characters, got {len(container_id_prefix)}")
 
-    # Character to value mapping
+    # ISO 6346 character mapping (skipping multiples of 11: 11, 22, 33)
     char_values = {}
 
-    # Letters: A-Z → (ASCII - 55) mod 10
-    # A(65) → 10 → 0, B(66) → 11 → 1, ..., Z(90) → 35 → 5
-    for i in range(ord("A"), ord("Z") + 1):
-        char = chr(i)
-        ascii_val = ord(char)
-        char_values[char] = (ascii_val - 55) % 10
+    # Letters A-Z with special mapping
+    # A=10, B=12, ..., K=21 (skip 11), L=23, ..., U=32 (skip 22), V=34, ..., Z=38 (skip 33)
+    letter_values = [
+        10,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,  # A-J
+        21,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,  # K-T (skip 22)
+        32,
+        34,
+        35,
+        36,
+        37,
+        38,  # U-Z (skip 33)
+    ]
+
+    for i, letter in enumerate("ABCDEFGHIJKLMNOPQRSTUVWXYZ"):
+        char_values[letter] = letter_values[i]
 
     # Digits: 0-9 → themselves
     for i in range(10):
@@ -118,12 +150,14 @@ def validate_check_digit(container_id: str) -> tuple[bool, int, int]:
 
 
 def validate_format(text: str) -> bool:
-    """Validate container ID format (4 letters + 7 digits).
+    """Validate container ID format per ISO 6346.
 
     Checks if the text matches the ISO 6346 format:
     - Exactly 11 characters
-    - First 4 characters are uppercase letters (A-Z)
-    - Last 7 characters are digits (0-9)
+    - First 3 characters are uppercase letters (A-Z) - Owner Code
+    - 4th character is equipment category identifier (U, J, or Z)
+    - Characters 5-10 are 6 digits (0-9) - Serial Number
+    - 11th character is 1 digit (0-9) - Check Digit
 
     Args:
         text: Container ID string to validate
@@ -134,16 +168,19 @@ def validate_format(text: str) -> bool:
     Example:
         >>> validate_format("CSQU3054383")
         True
-        >>> validate_format("CSQ3054383")  # Only 3 letters
+        >>> validate_format("BMOU1666403")
+        True
+        >>> validate_format("CSQA3054383")  # 4th char not U/J/Z
         False
-        >>> validate_format("CSQU305438A")  # Letter in digit position
+        >>> validate_format("CSQ3054383")   # Only 2 letters
         False
     """
     if not text or len(text) != 11:
         return False
 
-    # Pattern: 4 uppercase letters + 7 digits
-    pattern = r"^[A-Z]{4}[0-9]{7}$"
+    # Pattern: 3 uppercase letters + 1 category (U/J/Z) + 6 digits + 1 check digit
+    # Total: [A-Z]{3} + [UJZ] + [0-9]{7}
+    pattern = r"^[A-Z]{3}[UJZ][0-9]{7}$"
 
     return bool(re.match(pattern, text))
 

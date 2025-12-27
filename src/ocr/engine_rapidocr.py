@@ -117,15 +117,14 @@ class OCREngine:
                     det_db_thresh=self.config.det_db_thresh,
                     det_limit_side_len=self.config.det_limit_side_len,
                     use_space_char=True,  # Preserve spaces between words
-                    return_word_box=True,  # Return word-level boxes instead of line-level
+                    # Note: Not using return_word_box here, we use simpler line-level format
                 )
                 logger.info(
                     f"RapidOCR engine loaded with parameters: "
                     f"text_score={self.config.text_score}, "
                     f"det_db_box_thresh={self.config.det_db_box_thresh}, "
                     f"det_db_thresh={self.config.det_db_thresh}, "
-                    f"det_limit_side_len={self.config.det_limit_side_len}, "
-                    f"return_word_box=True"
+                    f"det_limit_side_len={self.config.det_limit_side_len}"
                 )
 
             except ImportError as e:
@@ -203,11 +202,11 @@ class OCREngine:
 
         try:
             # Run RapidOCR inference
+            # Note: RapidOCR API returns (results_list, timing_info)
+            # Each element in results_list is [bbox, text, confidence]
             result = self.engine(image)
 
-            # RapidOCR returns: (detections, elapse) tuple
-            # detections: [[bbox, text, confidence], ...]
-            # elapse: [det_time, cls_time, rec_time]
+            # Check if result is valid
             if result is None or len(result) == 0:
                 logger.warning("RapidOCR returned no result")
                 return OCREngineResult(
@@ -218,10 +217,39 @@ class OCREngine:
                     success=False,
                 )
 
-            # Extract detections (first element of tuple)
-            detections = result[0] if isinstance(result, tuple) else result
+            # Parse new RapidOCR format: (results_list, timing_info)
+            if isinstance(result, tuple) and len(result) >= 2:
+                results_list = result[0]
 
-            if not detections or len(detections) == 0:
+                # results_list is a list of [bbox, text, confidence] entries
+                if not results_list or len(results_list) == 0:
+                    logger.warning("RapidOCR returned no text detections")
+                    return OCREngineResult(
+                        text="",
+                        confidence=0.0,
+                        character_confidences=[],
+                        bounding_boxes=[],
+                        success=False,
+                    )
+
+                # Extract bboxes, texts, confidences from new format
+                bboxes_list = [item[0] for item in results_list]
+                texts_list = [item[1] for item in results_list]
+                confidences_list = [item[2] for item in results_list]
+
+            else:
+                logger.warning(
+                    f"Unexpected RapidOCR result format: {type(result)}, length: {len(result) if isinstance(result, (tuple, list)) else 'N/A'}"
+                )
+                return OCREngineResult(
+                    text="",
+                    confidence=0.0,
+                    character_confidences=[],
+                    bounding_boxes=[],
+                    success=False,
+                )
+
+            if not texts_list or len(texts_list) == 0:
                 logger.warning("RapidOCR returned no text detections")
                 return OCREngineResult(
                     text="",
@@ -231,19 +259,10 @@ class OCREngine:
                     success=False,
                 )
 
-            # Parse detections: each item is [bbox, text, confidence]
-            bboxes = []
-            texts = []
-            confidences = []
-
-            for detection in detections:
-                if len(detection) >= 3:
-                    bbox, text, conf = detection[0], detection[1], detection[2]
-                    bboxes.append(bbox)
-                    texts.append(str(text))
-                    confidences.append(float(conf))
-                else:
-                    logger.warning(f"Unexpected detection format: {detection}")
+            # Convert to proper types
+            bboxes = [bbox for bbox in bboxes_list]
+            texts = [str(text) for text in texts_list]
+            confidences = [float(conf) for conf in confidences_list]
 
             if len(texts) == 0:
                 logger.warning("No valid text extracted from detections")
@@ -328,8 +347,8 @@ class OCREngine:
         # BUT: Remove spaces within detected text first (e.g., "M S K U" -> "MSKU")
         cleaned_texts = [text.replace(" ", "") for text in texts]
 
-        # Join all cleaned text fragments
-        aggregated = "".join(cleaned_texts)
+        # Join all cleaned text fragments with spaces between regions
+        aggregated = " ".join(cleaned_texts)
 
         logger.debug(f"Text aggregation: {texts} -> '{aggregated}'")
 

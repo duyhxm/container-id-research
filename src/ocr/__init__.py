@@ -30,7 +30,9 @@ from .config_loader import (
     load_config,
 )
 from .corrector import CharacterCorrector, CorrectionResult
-from .engine import OCREngine, OCREngineResult
+from .engine_rapidocr import OCREngine, OCREngineResult
+from .engine_tesseract import TesseractEngine
+from .hybrid_engine_selector import HybridEngineSelector
 from .layout_detector import LayoutDetector
 from .processor import OCRProcessor
 from .types import (

@@ -17,32 +17,31 @@ class TestCalculateCheckDigit:
 
     def test_known_container_ids(self):
         """Test with known valid container IDs from ISO 6346 standard."""
-        # CSQU3054380 - Calculated check digit (spec example had error)
-        assert calculate_check_digit("CSQU305438") == 0
+        # CSQU3054383 - Calculated check digit using ISO 6346 algorithm
+        assert calculate_check_digit("CSQU305438") == 3
 
-        # MSKU1234566 - Valid container ID
-        assert calculate_check_digit("MSKU123456") == 6
+        # MSKU1234565 - Valid container ID
+        assert calculate_check_digit("MSKU123456") == 5
 
         # Test with other combinations
-        assert calculate_check_digit("ABCU000000") == 0
-        assert calculate_check_digit("TESU123456") == 4
+        assert calculate_check_digit("ABCU000000") == 1
+        assert calculate_check_digit("TESU123456") == 7
 
     def test_all_letters_owner_code(self):
         """Test with various letter combinations in owner code."""
         # Test with different letters to verify mapping
-        assert calculate_check_digit("ABCU000000") == 0
-        assert calculate_check_digit("XYZU999999") == 6
-        assert calculate_check_digit("TESU123456") == 4
+        assert calculate_check_digit("ABCU000000") == 1
+        assert calculate_check_digit("XYZU999999") == 9
+        assert calculate_check_digit("TESU123456") == 7
 
     def test_character_value_mapping(self):
         """Test that character-to-value mapping is correct."""
-        # A(65) → (65-55) % 10 = 10 % 10 = 0
-        # Z(90) → (90-55) % 10 = 35 % 10 = 5
-        # Verify by checking calculation with specific patterns
-        assert calculate_check_digit("AAAU000000") == 0  # All A's map to 0
-        # ZZZU000000 will have different check digit due to Z mapping
+        # Verify character mapping is applied correctly
+        # AAAU000000: All A's map to 10
+        assert calculate_check_digit("AAAU000000") == 7  # All A's map to 10
+        # ZZZU000000: All Z's map to 38
         result = calculate_check_digit("ZZZU000000")
-        assert isinstance(result, int) and 0 <= result <= 9
+        assert result == 5 and isinstance(result, int) and 0 <= result <= 9
 
     def test_position_weights(self):
         """Test that position weights (powers of 2) are applied correctly."""
@@ -91,17 +90,17 @@ class TestValidateCheckDigit:
 
     def test_valid_container_ids(self):
         """Test validation with known valid container IDs."""
-        # CSQU3054380 - Corrected check digit
-        is_valid, expected, actual = validate_check_digit("CSQU3054380")
+        # CSQU3054383 - Valid ID (check digit 3)
+        is_valid, expected, actual = validate_check_digit("CSQU3054383")
         assert is_valid is True
-        assert expected == 0
-        assert actual == 0
+        assert expected == 3
+        assert actual == 3
 
         # Test multiple valid IDs
         valid_ids = [
-            "CSQU3054380",
-            "MSKU1234566",  # Check digit 6
-            "ABCU0000000",  # Check digit 0
+            "CSQU3054383",  # Check digit 3
+            "MSKU1234565",  # Check digit 5
+            "ABCU0000001",  # Check digit 1
         ]
 
         for container_id in valid_ids:
@@ -111,31 +110,31 @@ class TestValidateCheckDigit:
 
     def test_invalid_check_digit(self):
         """Test detection of invalid check digit."""
-        # CSQU3054380 is valid (check digit 0), change to 5
+        # CSQU3054383 is valid (check digit 3), change to 5
         is_valid, expected, actual = validate_check_digit("CSQU3054385")
         assert is_valid is False
-        assert expected == 0
+        assert expected == 3
         assert actual == 5
 
-        # Change check digit to 3
-        is_valid, expected, actual = validate_check_digit("CSQU3054383")
+        # Change check digit to 0
+        is_valid, expected, actual = validate_check_digit("CSQU3054380")
         assert is_valid is False
-        assert expected == 0
-        assert actual == 3
+        assert expected == 3
+        assert actual == 0
 
     def test_check_digit_zero(self):
-        """Test container IDs with check digit 0."""
-        # When (sum mod 11) mod 10 = 0
-        is_valid, expected, actual = validate_check_digit("CSQU3054380")
+        """Test container IDs with check digit matching calculation."""
+        # CSQU3054383 - check digit 3
+        is_valid, expected, actual = validate_check_digit("CSQU3054383")
         assert is_valid is True
-        assert expected == 0
-        assert actual == 0
+        assert expected == 3
+        assert actual == 3
 
-        # Another example with check digit 0
-        is_valid, expected, actual = validate_check_digit("ABCU0000000")
+        # Another example with calculated check digit
+        is_valid, expected, actual = validate_check_digit("ABCU0000001")
         assert is_valid is True
-        assert expected == 0
-        assert actual == 0
+        assert expected == 1
+        assert actual == 1
 
     def test_invalid_length(self):
         """Test error handling for invalid length."""
@@ -321,11 +320,11 @@ class TestIntegrationScenarios:
 
     def test_full_validation_workflow_valid(self):
         """Test complete validation workflow with valid ID."""
-        raw_text = "msku 123456 6"
+        raw_text = "msku 123456 5"
 
         # Step 1: Normalize
         normalized = normalize_container_id(raw_text)
-        assert normalized == "MSKU1234566"
+        assert normalized == "MSKU1234565"
 
         # Step 2: Validate format
         assert validate_format(normalized) is True
@@ -351,14 +350,14 @@ class TestIntegrationScenarios:
 
     def test_full_validation_workflow_invalid_check_digit(self):
         """Test complete validation workflow with invalid check digit."""
-        raw_text = "CSQU3054385"  # Wrong check digit (should be 0)
+        raw_text = "CSQU3054385"  # Wrong check digit (should be 3)
 
         normalized = normalize_container_id(raw_text)
         assert validate_format(normalized) is True
 
         is_valid, expected, actual = validate_check_digit(normalized)
         assert is_valid is False
-        assert expected == 0
+        assert expected == 3
         assert actual == 5
 
     def test_ocr_error_simulation(self):

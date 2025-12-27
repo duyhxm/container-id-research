@@ -236,11 +236,11 @@ class TestCorrectionWithValidation:
 
     def test_valid_after_correction(self, corrector):
         """Test successful correction leading to valid container ID."""
-        # MSKU1234566 is valid (check digit 6)
+        # MSKU1234565 is valid (check digit 5)
         # Input has 'I' instead of '1'
-        result, is_valid = corrector.correct_with_validation("MSKUI234566")
+        result, is_valid = corrector.correct_with_validation("MSKUI234565")
 
-        assert result.corrected_text == "MSKU1234566"
+        assert result.corrected_text == "MSKU1234565"
         assert result.correction_applied
         assert is_valid
 

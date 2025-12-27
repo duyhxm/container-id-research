@@ -28,7 +28,9 @@ from src.alignment.types import DecisionStatus as AlignDecisionStatus
 
 from .config_loader import Config, get_default_config, load_config
 from .corrector import CharacterCorrector
-from .engine import OCREngine
+from .engine_rapidocr import OCREngine
+from .engine_tesseract import TesseractEngine
+from .hybrid_engine_selector import HybridEngineSelector
 from .layout_detector import LayoutDetector
 
 logger = logging.getLogger(__name__)
@@ -78,8 +80,37 @@ class OCRProcessor:
         else:
             self.config: Config = load_config(config_path)
 
-        # Initialize components with nested config objects
-        self.engine = OCREngine(config=self.config.ocr.engine)
+        # Initialize engine based on type
+        engine_type = self.config.ocr.engine.type.lower()
+        if engine_type == "hybrid":
+            # Hybrid mode: Automatic engine selection with fallback
+            self.hybrid_selector = HybridEngineSelector(
+                config=self.config,
+                enable_fallback=self.config.ocr.hybrid.enable_fallback,
+                fallback_confidence_threshold=self.config.ocr.hybrid.fallback_confidence_threshold,
+            )
+            self.engine = None  # Not used in hybrid mode
+            logger.info(
+                f"Initialized in HYBRID mode: "
+                f"fallback={self.config.ocr.hybrid.enable_fallback}, "
+                f"threshold={self.config.ocr.hybrid.fallback_confidence_threshold}"
+            )
+        elif engine_type == "tesseract":
+            self.engine = TesseractEngine(config=self.config.ocr.engine)
+            self.hybrid_selector = None
+            logger.info("Initialized with Tesseract OCR engine")
+        elif engine_type == "rapidocr":
+            self.engine = OCREngine(config=self.config.ocr.engine)
+            self.hybrid_selector = None
+            logger.info("Initialized with RapidOCR engine")
+        else:
+            logger.warning(
+                f"Unknown engine type '{engine_type}', defaulting to RapidOCR"
+            )
+            self.engine = OCREngine(config=self.config.ocr.engine)
+            self.hybrid_selector = None
+
+        # Initialize other components
         self.layout_detector = LayoutDetector(config=self.config.ocr.layout)
         self.corrector = CharacterCorrector(config=self.config.ocr.correction)
 
@@ -120,26 +151,27 @@ class OCRProcessor:
         layout_type = stage1_result.layout_type
 
         # ═══════════════════════════════════════════════════════════════
-        # STAGE 2: FORMAT VALIDATION
+        # STAGE 2: CHARACTER CORRECTION (Run BEFORE format validation)
         # ═══════════════════════════════════════════════════════════════
-        stage2_result = self._stage2_format_validation(raw_text)
-        if stage2_result.decision == DecisionStatus.REJECT:
-            stage2_result.processing_time_ms = (time.perf_counter() - start_time) * 1000
-            return stage2_result
-
-        normalized_text = stage2_result.raw_text
+        # Apply domain-specific corrections (O→0 in serial, 0→O in owner code)
+        stage2_result = self._stage3_character_correction(raw_text)
+        corrected_text = stage2_result.raw_text
+        correction_applied = stage2_result.validation_metrics.correction_applied
 
         # ═══════════════════════════════════════════════════════════════
-        # STAGE 3: CHARACTER CORRECTION
+        # STAGE 3: FORMAT VALIDATION (Run AFTER correction)
         # ═══════════════════════════════════════════════════════════════
-        stage3_result = self._stage3_character_correction(normalized_text)
-        corrected_text = stage3_result.raw_text
-        correction_applied = stage3_result.validation_metrics.correction_applied
+        stage3_result = self._stage2_format_validation(corrected_text)
+        if stage3_result.decision == DecisionStatus.REJECT:
+            stage3_result.processing_time_ms = (time.perf_counter() - start_time) * 1000
+            return stage3_result
+
+        normalized_text = stage3_result.raw_text
 
         # ═══════════════════════════════════════════════════════════════
         # STAGE 4: CHECK DIGIT VALIDATION
         # ═══════════════════════════════════════════════════════════════
-        stage4_result = self._stage4_check_digit_validation(corrected_text)
+        stage4_result = self._stage4_check_digit_validation(normalized_text)
         if stage4_result.decision == DecisionStatus.REJECT:
             stage4_result.processing_time_ms = (time.perf_counter() - start_time) * 1000
             return stage4_result
@@ -203,10 +235,9 @@ class OCRProcessor:
         # Preprocessing: Resize small images for better OCR
         # Similar to Module 4's sharpness normalization approach
         h, w = rectified_gray.shape
-        min_height = getattr(self.config.ocr, "preprocessing", {}).get("min_height", 64)
-        auto_resize = getattr(self.config.ocr, "preprocessing", {}).get(
-            "auto_resize", True
-        )
+        preprocessing = self.config.ocr.preprocessing
+        min_height = preprocessing.min_height
+        auto_resize = preprocessing.auto_resize
 
         if auto_resize and h < min_height:
             # Calculate new dimensions maintaining aspect ratio
@@ -227,44 +258,33 @@ class OCRProcessor:
             )
 
         # Apply CLAHE for contrast enhancement (improves OCR on low-contrast images)
-        enable_clahe = getattr(self.config.ocr, "preprocessing", {}).get(
-            "enable_clahe", True
-        )
-        if enable_clahe:
-            clip_limit = getattr(self.config.ocr, "preprocessing", {}).get(
-                "clahe_clip_limit", 2.0
-            )
-            tile_size = getattr(self.config.ocr, "preprocessing", {}).get(
-                "clahe_tile_size", 8
-            )
+        if preprocessing.enable_clahe:
             clahe = cv2.createCLAHE(
-                clipLimit=clip_limit, tileGridSize=(tile_size, tile_size)
+                clipLimit=preprocessing.clahe_clip_limit,
+                tileGridSize=(
+                    preprocessing.clahe_tile_size,
+                    preprocessing.clahe_tile_size,
+                ),
             )
             rectified_gray = clahe.apply(rectified_gray)
             logger.info(
                 f"Applied CLAHE contrast enhancement "
-                f"(clip_limit={clip_limit}, tile_size={tile_size})"
+                f"(clip_limit={preprocessing.clahe_clip_limit}, tile_size={preprocessing.clahe_tile_size})"
             )
 
         # Optional: Apply adaptive thresholding (binarization)
-        enable_threshold = getattr(self.config.ocr, "preprocessing", {}).get(
-            "enable_threshold", False
-        )
-        if enable_threshold:
-            block_size = getattr(self.config.ocr, "preprocessing", {}).get(
-                "threshold_block_size", 11
-            )
-            c = getattr(self.config.ocr, "preprocessing", {}).get("threshold_c", 2)
+        if preprocessing.enable_threshold:
             rectified_gray = cv2.adaptiveThreshold(
                 rectified_gray,
                 255,
                 cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
                 cv2.THRESH_BINARY,
-                block_size,
-                c,
+                preprocessing.threshold_block_size,
+                preprocessing.threshold_c,
             )
             logger.info(
-                f"Applied adaptive thresholding " f"(block_size={block_size}, C={c})"
+                f"Applied adaptive thresholding "
+                f"(block_size={preprocessing.threshold_block_size}, C={preprocessing.threshold_c})"
             )
 
         # DEBUG: Save preprocessed image for inspection
@@ -274,10 +294,32 @@ class OCRProcessor:
         cv2.imwrite(str(debug_path), rectified_gray)
         logger.info(f"Saved preprocessed image to {debug_path} for inspection")
 
-        # Extract text using OCR engine
-        ocr_result = self.engine.extract_text(
-            image=rectified_gray, layout_type=layout_type
-        )
+        # Extract text using appropriate engine
+        if self.hybrid_selector is not None:
+            # Hybrid mode: Automatic engine selection based on layout
+            hybrid_result = self.hybrid_selector.extract_text(
+                image=rectified_gray, layout_type=layout_type
+            )
+            # Convert HybridOCRResult to OCREngineResult
+            from .engine_rapidocr import OCREngineResult
+
+            ocr_result = OCREngineResult(
+                text=hybrid_result.text,
+                confidence=hybrid_result.confidence,
+                character_confidences=hybrid_result.character_confidences,
+                bounding_boxes=hybrid_result.bounding_boxes,
+                success=hybrid_result.success,
+            )
+            logger.info(
+                f"Hybrid OCR: engine={hybrid_result.engine_used}, "
+                f"fallback={hybrid_result.fallback_attempted}, "
+                f"time={hybrid_result.extraction_time_ms:.1f}ms"
+            )
+        else:
+            # Single engine mode
+            ocr_result = self.engine.extract_text(
+                image=rectified_gray, layout_type=layout_type
+            )
 
         # Check if OCR succeeded
         if not ocr_result.success or not ocr_result.text:
@@ -335,26 +377,34 @@ class OCRProcessor:
         # Normalize text (remove spaces, uppercase)
         normalized = normalize_container_id(raw_text)
 
+        logger.debug(
+            f"Format validation: raw_text='{raw_text}' → normalized='{normalized}' (len={len(normalized)})"
+        )
+
         # Check length
         if len(normalized) != 11:
+            logger.warning(
+                f"Length validation failed: got {len(normalized)}, expected 11. "
+                f"Normalized: '{normalized}' (raw: '{raw_text}')"
+            )
             return self._create_rejection(
                 raw_text=raw_text,
                 reason=RejectionReason(
                     code="OCR-E004",
                     constant="INVALID_LENGTH",
-                    message=f"Container ID length {len(normalized)} != 11 (expected)",
+                    message=f"Container ID length {len(normalized)} != 11 (expected). Text: '{normalized}'",
                     stage="STAGE_2",
                 ),
             )
 
-        # Validate format (4 letters + 7 digits)
+        # Validate format (3 letters + 1 category [U/J/Z] + 7 digits per ISO 6346)
         if not validate_format(normalized):
             return self._create_rejection(
                 raw_text=raw_text,
                 reason=RejectionReason(
                     code="OCR-E005",
                     constant="INVALID_FORMAT",
-                    message="Container ID does not match pattern [A-Z]{4}[0-9]{7}",
+                    message="Container ID does not match pattern [A-Z]{3}[UJZ][0-9]{7}",
                     stage="STAGE_2",
                 ),
             )

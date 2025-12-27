@@ -4,8 +4,11 @@
 # ENGINE CONFIGURATION
 # ============================================================================
 engine:
-  # OCR engine type (currently only "rapidocr" supported)
-  type: "rapidocr"
+  # OCR engine type: "tesseract", "rapidocr", or "hybrid"
+  # - tesseract: Fast, best for single-line (30x faster)
+  # - rapidocr: Robust, best for multi-line/low-contrast
+  # - hybrid: Automatic selection based on layout + fallback
+  type: "hybrid"
   
   # Enable angle classification (corrects rotated text)
   use_angle_cls: true
@@ -33,11 +36,23 @@ engine:
   det_limit_side_len: 960
 
 # ============================================================================
+# HYBRID ENGINE CONFIGURATION (when type=\"hybrid\")
+# ============================================================================
+hybrid:
+  # Enable automatic fallback to secondary engine
+  enable_fallback: true
+  
+  # Minimum confidence threshold to accept result (0.0-1.0)
+  # If primary engine confidence < this, try fallback
+  fallback_confidence_threshold: 0.3
+
+# ============================================================================
 # THRESHOLD CONFIGURATION
 # ============================================================================
 thresholds:
   # Minimum OCR confidence to accept result (0.0-1.0)
-  min_confidence: 0.7
+  # Set to 0.0 for Tesseract (PSM 7 returns 0 confidence)
+  min_confidence: 0.0
   
   # Minimum validation confidence after all checks (0.0-1.0)
   min_validation_confidence: 0.7
@@ -102,11 +117,12 @@ check_digit:
 preprocessing:
   # Minimum height for OCR (resize smaller images to this height)
   # RapidOCR performs better with larger text (>= 32px character height)
-  # Increased to 96px for better character detection
+  # Tesseract works well with original size, so disable for tesseract
   min_height: 96
   
   # Enable automatic resize for small images
-  auto_resize: true
+  # Disable for Tesseract (works better with original size)
+  auto_resize: false
   
   # Interpolation method for upscaling: "linear" or "cubic"
   # linear: Faster, good quality for text

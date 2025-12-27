@@ -77,6 +77,18 @@ class CorrectionRulesConfig(BaseModel):
     serial: Dict[str, str] = {"O": "0", "I": "1", "S": "5", "B": "8"}
 
 
+class HybridConfig(BaseModel):
+    """Hybrid OCR engine configuration.
+
+    Attributes:
+        enable_fallback: Enable automatic fallback to secondary engine
+        fallback_confidence_threshold: Min confidence to accept result (avoid fallback)
+    """
+
+    enable_fallback: bool = True
+    fallback_confidence_threshold: float = 0.3
+
+
 class CorrectionConfig(BaseModel):
     """Character correction configuration.
 
@@ -103,6 +115,32 @@ class CheckDigitConfig(BaseModel):
     max_correction_attempts: int = 10
 
 
+class PreprocessingConfig(BaseModel):
+    """Preprocessing configuration.
+
+    Attributes:
+        min_height: Minimum height for OCR (resize smaller images)
+        auto_resize: Enable automatic resize for small images
+        upscale_interpolation: Interpolation method ("linear" or "cubic")
+        enable_clahe: Enable CLAHE contrast enhancement
+        clahe_clip_limit: CLAHE clip limit parameter
+        clahe_tile_size: CLAHE tile grid size
+        enable_threshold: Enable adaptive thresholding
+        threshold_block_size: Block size for adaptive thresholding
+        threshold_c: Constant C for adaptive thresholding
+    """
+
+    min_height: int = 96
+    auto_resize: bool = False
+    upscale_interpolation: str = "linear"
+    enable_clahe: bool = False
+    clahe_clip_limit: float = 2.0
+    clahe_tile_size: int = 8
+    enable_threshold: bool = False
+    threshold_block_size: int = 11
+    threshold_c: int = 2
+
+
 class OutputConfig(BaseModel):
     """Output configuration.
 
@@ -122,18 +160,22 @@ class OCRModuleConfig(BaseModel):
 
     Attributes:
         engine: OCR engine configuration
+        hybrid: Hybrid engine configuration (used when engine.type="hybrid")
         thresholds: Threshold values for processing
         layout: Layout detection configuration
         correction: Character correction configuration
         check_digit: Check digit validation configuration
+        preprocessing: Image preprocessing configuration
         output: Output formatting configuration
     """
 
     engine: OCREngineConfig = OCREngineConfig()
+    hybrid: HybridConfig = Field(default_factory=HybridConfig)
     thresholds: ThresholdsConfig = ThresholdsConfig()
     layout: LayoutConfig = LayoutConfig()
     correction: CorrectionConfig = CorrectionConfig()
     check_digit: CheckDigitConfig = CheckDigitConfig()
+    preprocessing: PreprocessingConfig = PreprocessingConfig()
     output: OutputConfig = OutputConfig()
 
 
@@ -177,14 +219,20 @@ def load_config(config_path: Path) -> Config:
 
 
 def get_default_config() -> Config:
-    """Get default configuration without loading from file.
+    """Get default configuration from bundled config.yaml file.
 
     Returns:
-        Config object with all default values
+        Config object loaded from src/ocr/config.yaml
 
     Example:
         >>> config = get_default_config()
         >>> print(config.ocr.engine.type)
-        rapidocr
+        hybrid
     """
-    return Config()
+    # Load from bundled config.yaml in same directory
+    default_config_path = Path(__file__).parent / "config.yaml"
+    if default_config_path.exists():
+        return load_config(default_config_path)
+    else:
+        # Fallback to hardcoded defaults if config file is missing
+        return Config()

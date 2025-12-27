@@ -1,393 +1,586 @@
-# Module 5: OCR Extraction
+# Module 5: OCR Extraction & Validation
 
-**Status**: 🔴 Not Yet Implemented  
-**Priority**: Medium-High  
-**Technology**: PaddleOCR / EasyOCR / Tesseract
+**Status**: ✅ Implemented (Hybrid OCR)  
+**Module Code**: `ocr`  
+**Version**: 2.0.0
 
 ---
 
 ## Overview
 
-This module extracts the container ID text from the rectified image produced by Module 4, validates the format, and returns the final container ID string.
+Module 5 is the **final stage** of the Container ID extraction pipeline, performing Optical Character Recognition (OCR) on aligned container ID regions and validating the extracted text against **ISO 6346** standards.
+
+**Key Features:**
+- ✅ **Hybrid OCR Engine**: Automatic selection between Tesseract (fast) and RapidOCR (robust)
+- ✅ **Layout-Aware Processing**: Single-line → Tesseract (~180ms), Multi-line → RapidOCR (~2500ms)
+- ✅ **Automatic Fallback**: Secondary engine if primary fails
+- ✅ **ISO 6346 Validation**: Automatic check digit verification
+- ✅ **Smart Error Correction**: Domain-aware character corrections (O↔0, I↔1, etc.)
+- ✅ **Quality Assurance**: Multi-stage validation pipeline with explicit rejection reasons
 
 ---
 
-## Purpose
+## Input Requirements
 
-Convert the visual container ID into machine-readable text with high accuracy and format validation.
+**Module 4 (Alignment) Output:**
+```python
+from src.alignment.types import AlignmentResult
+
+# Input must have decision=PASS
+alignment_result = AlignmentResult(
+    decision=DecisionStatus.PASS,
+    rectified_image=rectified_img,  # Grayscale np.ndarray
+    metrics=QualityMetrics(...),
+    aspect_ratio=7.5,  # Used for layout detection
+    ...
+)
+```
+
+**Image Quality Guarantees:**
+- ✅ Perspective-corrected (frontal view)
+- ✅ Minimum height: 25px (OCR-readable)
+- ✅ High contrast: $M_C \geq 50$
+- ✅ Sharp edges: $M_S \geq 100$
 
 ---
 
-## Container ID Format
+## Output Format
 
-Container IDs follow the **ISO 6346** standard:
+```python
+from src.ocr.types import OCRResult
+
+result = OCRResult(
+    decision=DecisionStatus.PASS,  # or REJECT
+    container_id="MSKU1234567",    # Validated 11-character ID
+    raw_text="MSKU 123456 7",      # Original OCR output
+    confidence=0.95,               # OCR confidence [0.0, 1.0]
+    validation_metrics=ValidationMetrics(
+        format_valid=True,
+        owner_code_valid=True,
+        serial_valid=True,
+        check_digit_valid=True,
+        check_digit_expected=7,
+        check_digit_actual=7,
+        correction_applied=False,
+        ocr_confidence=0.95
+    ),
+    rejection_reason=RejectionReason("NONE", "", ""),
+    layout_type=LayoutType.SINGLE_LINE,
+    processing_time_ms=45.2
+)
+```
+
+---
+
+## Quick Start
+
+### Installation
+
+```bash
+# Install dependencies (includes rapidocr-onnxruntime>=1.4.4)
+uv sync
+```
+
+### Basic Usage
+
+```python
+from pathlib import Path
+from src.alignment import AlignmentProcessor
+from src.ocr import OCRProcessor
+
+# Initialize processor
+ocr_processor = OCRProcessor()
+
+# Process aligned image from Module 4
+alignment_result = AlignmentProcessor().process(image, keypoints)
+
+if alignment_result.is_pass():
+    # Extract container ID
+    ocr_result = ocr_processor.process(alignment_result)
+    
+    if ocr_result.is_pass():
+        print(f"✅ Container ID: {ocr_result.container_id}")
+        print(f"   Confidence: {ocr_result.confidence:.2%}")
+        print(f"   Layout: {ocr_result.layout_type.value}")
+    else:
+        print(f"❌ OCR Failed: {ocr_result.rejection_reason.message}")
+        print(f"   Stage: {ocr_result.rejection_reason.stage}")
+```
+
+### Configuration
+
+Customize behavior via `src/ocr/config.yaml`:
+
+```yaml
+engine:
+  type: "hybrid"                # "tesseract", "rapidocr", or "hybrid" (recommended)
+
+hybrid:
+  enable_fallback: true         # Automatic fallback to secondary engine
+  fallback_confidence_threshold: 0.3  # Min confidence to accept result
+
+thresholds:
+  min_confidence: 0.0           # Set to 0.0 for Tesseract (PSM 7 returns 0)
+  min_validation_confidence: 0.7
+
+layout:
+  single_line_aspect_ratio_min: 5.0   # Single-line threshold
+  multi_line_aspect_ratio_min: 2.5    # Multi-line threshold
+
+correction:
+  enabled: true                 # Enable character correction
+
+check_digit:
+  enabled: true                 # Enable ISO 6346 validation
+  attempt_correction: true      # Try single-char fixes if check digit fails
+```
+
+---
+
+## ISO 6346 Container ID Standard
+
+### Format
 
 ```
 XXXX 999999 9
-
-Where:
-- XXXX: 4 letters (owner code)
-- 999999: 6 digits (serial number)
-- 9: 1 digit (check digit)
-
-Example: MSKU 123456 7
+│    │      │
+│    │      └─ Check Digit (1 digit)
+│    └──────── Serial Number (6 digits)
+└───────────── Owner Code (4 uppercase letters)
 ```
+
+**Example**: `MSKU1234567`
+
+### Check Digit Calculation
+
+The 11th character is a **checksum** calculated from the first 10 characters:
+
+1. Convert characters to numeric values (A=10, B=11, ..., Z=35; 0=0, 1=1, ...)
+2. Multiply by position weights (powers of 2: 1, 2, 4, 8, ..., 512)
+3. Sum all products
+4. Check digit = (sum % 11) % 10
+
+**Example**: For `CSQU305438`:
+```
+C(12)×1 + S(28)×2 + Q(26)×4 + U(30)×8 + 3×16 + 0×32 + 5×64 + 4×128 + 3×256 + 8×512
+= 12 + 56 + 104 + 240 + 48 + 0 + 320 + 512 + 768 + 4096 = 6156
+Check digit = (6156 % 11) % 10 = (3) % 10 = 3
+```
+
+✅ `CSQU3054383` is **valid** (check digit matches).
 
 ---
 
-## OCR Engine Selection
+## Processing Pipeline
 
-### Option 1: PaddleOCR (Recommended)
+The OCR module uses a **hybrid 4-stage cascade filter**:
 
-**Pros**:
-- High accuracy on English text
-- Fast inference
-- Supports GPU acceleration
-- Lightweight models
+```
+┌──────────────────────────────────────┐
+│  STAGE 0: LAYOUT DETECTION           │
+│  • Aspect ratio analysis             │
+│  • Single-line vs Multi-line         │
+│  • Engine selection                  │
+├──────────────────────────────────────┤
+│  STAGE 1: TEXT EXTRACTION (HYBRID)   │
+│  • Single-line → Tesseract (fast)    │
+│  • Multi-line → RapidOCR (robust)    │
+│  • Automatic fallback on failure     │
+├──────────────────────────────────────┤
+│  STAGE 2: CHARACTER CORRECTION       │
+│  • Domain-aware fixes                │
+│  • O↔0, I↔1, S↔5, B↔8               │
+│  • Position-dependent rules          │
+├──────────────────────────────────────┤
+│  STAGE 3: FORMAT VALIDATION          │
+│  • Length check (11 chars)           │
+│  • Regex: ^[A-Z]{3}[UJZ][0-9]{7}$    │
+│  • Category identifier validation    │
+├──────────────────────────────────────┤
+│  STAGE 4: CHECK DIGIT (ISO 6346)     │
+│  • Calculate expected check digit    │
+│  • Compare with actual               │
+│  • Character mapping (skip 11,22,33) │
+│  • Final PASS/REJECT decision        │
+└──────────────────────────────────────┘
+```
 
-**Cons**:
-- Primarily focused on Chinese text (but English works well)
+**Rejection Codes:**
 
-### Option 2: EasyOCR
-
-**Pros**:
-- Easy to use
-- Good accuracy
-- Supports many languages
-
-**Cons**:
-- Slower than PaddleOCR
-- Larger model size
-
-### Option 3: Tesseract
-
-**Pros**:
-- Industry standard
-- Highly configurable
-- Free and open source
-
-**Cons**:
-- Requires careful preprocessing
-- Lower accuracy on challenging cases
-
-### Recommendation
-
-**Start with PaddleOCR**, fallback to EasyOCR if needed.
+| Code                   | Stage | Meaning                            | Recovery            |
+| ---------------------- | ----- | ---------------------------------- | ------------------- |
+| `NO_TEXT`              | 1     | OCR found no text                  | Re-process image    |
+| `LOW_CONFIDENCE`       | 1     | OCR confidence < 0.7               | Manual review       |
+| `INVALID_LENGTH`       | 2     | Length ≠ 11 characters             | Cannot recover      |
+| `INVALID_FORMAT`       | 3     | Invalid structure after correction | Cannot recover      |
+| `CHECK_DIGIT_MISMATCH` | 4     | ISO 6346 validation failed         | Suggest corrections |
 
 ---
 
-## Implementation Plan
+## Layout Handling
 
-### Phase 1: Basic OCR (Week 1)
+Container IDs appear in **two formats**:
 
-- [ ] Install and test PaddleOCR
-- [ ] Create OCR inference function
-- [ ] Test on sample rectified images
-- [ ] Measure raw accuracy
+### Single-Line (70-80% of cases)
 
-### Phase 2: Post-Processing (Week 1)
+```
+┌─────────────────────────────┐
+│  MSKU 1234567               │
+└─────────────────────────────┘
+```
 
-- [ ] Implement format validation (regex)
-- [ ] Character correction logic (O→0, I→1, etc.)
-- [ ] Check digit validation
-- [ ] Confidence filtering
+- **Aspect Ratio**: W/H ∈ [5.0, 9.0]
+- **OCR Strategy**: Single text region detection
 
-### Phase 3: Fine-Tuning (Week 2)
+### Multi-Line (20-30% of cases)
 
-- [ ] Collect difficult cases
-- [ ] Fine-tune OCR model on container ID dataset
-- [ ] Optimize post-processing rules
-- [ ] Error analysis
+```
+┌──────────────┐
+│  MSKU        │
+│  1234567     │
+└──────────────┘
+```
 
-### Phase 4: Integration (Week 1)
+- **Aspect Ratio**: W/H ∈ [2.5, 4.5]
+- **OCR Strategy**: Detect two regions, concatenate results
 
-- [ ] Integrate with Module 4 output
-- [ ] End-to-end pipeline testing
-- [ ] Performance optimization
-- [ ] Documentation
+**Automatic Detection**: Module uses aspect ratio from Module 4 to determine layout type.
 
 ---
 
-## Technical Specification
+## Character Correction Rules
 
-### Input
+OCR engines often confuse similar-looking characters. Module 5 applies **domain-aware corrections**:
 
-```json
-{
-  "rectified_image_path": "results/rectified_id.jpg",
-  "image_array": "<numpy_array>",
-  "quality_score": 0.92
-}
-```
+### Owner Code (Positions 1-4) - Must be LETTERS
 
-### Output
+| OCR Output  | Corrected To | Reason                       |
+| ----------- | ------------ | ---------------------------- |
+| `0` (zero)  | `O` (oh)     | Owner codes are letters only |
+| `1` (one)   | `I` (eye)    | Owner codes are letters only |
+| `5` (five)  | `S` (ess)    | Less common, but possible    |
+| `8` (eight) | `B` (bee)    | Rare, but handled            |
 
-```json
-{
-  "container_id": "MSKU1234567",
-  "raw_text": "MSKU 123456 7",
-  "confidence": 0.95,
-  "format_valid": true,
-  "check_digit_valid": true,
-  "corrections_applied": [
-    {"position": 5, "original": "O", "corrected": "0"}
-  ]
-}
-```
+### Serial + Check Digit (Positions 5-11) - Must be DIGITS
 
----
+| OCR Output | Corrected To | Reason                         |
+| ---------- | ------------ | ------------------------------ |
+| `O` (oh)   | `0` (zero)   | Serial numbers are digits only |
+| `I` (eye)  | `1` (one)    | Serial numbers are digits only |
+| `S` (ess)  | `5` (five)   | Less common, but possible      |
+| `B` (bee)  | `8` (eight)  | Rare, but handled              |
 
-## Post-Processing Pipeline
-
-### Step 1: Text Extraction
-
-```python
-from paddleocr import PaddleOCR
-
-ocr = PaddleOCR(use_angle_cls=True, lang='en', use_gpu=True)
-result = ocr.ocr(image_path, cls=True)
-
-# Extract text and confidence
-raw_text = result[0][0][1][0]
-confidence = result[0][0][1][1]
-```
-
-### Step 2: Format Validation
-
-```python
-import re
-
-CONTAINER_ID_PATTERN = r'^[A-Z]{4}[0-9]{6}[0-9]$'
-
-def validate_format(text: str) -> bool:
-    # Remove whitespace
-    text = text.replace(' ', '').upper()
-    return bool(re.match(CONTAINER_ID_PATTERN, text))
-```
-
-### Step 3: Character Corrections
-
-Common OCR errors:
-
-| OCR Output | Correction | Context |
-|------------|------------|---------|
-| `0` (zero) | `O` | In first 4 letters |
-| `O` | `0` (zero) | In last 7 digits |
-| `1` (one) | `I` | In first 4 letters |
-| `I` | `1` (one) | In last 7 digits |
-| `8` | `B` | In first 4 letters |
-| `5` | `S` | In first 4 letters |
-
-```python
-def apply_corrections(text: str) -> str:
-    text = text.replace(' ', '').upper()
-    
-    # Owner code (first 4 chars): only letters
-    owner_code = text[:4]
-    owner_code = owner_code.replace('0', 'O')
-    owner_code = owner_code.replace('1', 'I')
-    
-    # Serial number + check digit (last 7 chars): only digits
-    serial = text[4:]
-    serial = serial.replace('O', '0')
-    serial = serial.replace('I', '1')
-    
-    return owner_code + serial
-```
-
-### Step 4: Check Digit Validation
-
-ISO 6346 check digit algorithm:
-
-```python
-def calculate_check_digit(container_id: str) -> int:
-    """Calculate ISO 6346 check digit."""
-    # Character to value mapping
-    char_values = {chr(i): (i - 55) % 10 if i > 64 else int(chr(i))
-                   for i in range(48, 91)}
-    
-    # Position multipliers
-    multipliers = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512]
-    
-    # Calculate sum
-    total = sum(char_values[c] * multipliers[i] 
-                for i, c in enumerate(container_id[:10]))
-    
-    # Return check digit
-    return (total % 11) % 10
-
-def validate_check_digit(container_id: str) -> bool:
-    """Validate check digit."""
-    if len(container_id) != 11:
-        return False
-    
-    expected = calculate_check_digit(container_id)
-    actual = int(container_id[10])
-    
-    return expected == actual
-```
+**Example:**
+- OCR Output: `MSK01234567` (digit `0` in owner code)
+- Corrected: `MSKO1234567` (letter `O` in owner code)
 
 ---
 
-## Configuration
+## Performance Targets
+
+### Accuracy
+
+- **Character-level accuracy**: > 99% (on high-quality Module 4 outputs)
+- **Container ID accuracy**: > 95% (end-to-end with check digit validation)
+
+### Latency
+
+- **GPU (T4)**: < 50ms per image
+- **CPU (8 cores)**: < 200ms per image
+
+### Throughput
+
+- **GPU (T4)**: ~200 images/second
+- **CPU**: ~50 images/second
+
+---
+
+## Demo Application
+
+### Launch Interactive Demo
+
+```bash
+# From project root
+uv run python demos/ocr/launch.py
+```
+
+**Demo Features:**
+- 📸 Upload container ID images
+- 🔍 View OCR extraction process
+- ✅ See validation results (format, check digit)
+- 📊 Visualize confidence scores
+- 🎯 Test with example images
+
+---
+
+## Configuration Reference
+
+### Full Config Schema (src/ocr/config.yaml)
 
 ```yaml
 ocr:
-  engine: paddleocr
+  # Engine configuration
+  engine:
+    type: "rapidocr"
+    use_angle_cls: true       # Enable text angle classification
+    use_gpu: true             # Use GPU if available
+    text_score: 0.5           # Minimum text detection score
+    lang: "en"                # Language model
   
-  paddleocr:
-    lang: en
-    use_angle_cls: true
-    use_gpu: true
-    det_model_dir: null  # Use default
-    rec_model_dir: null  # Use default or fine-tuned
+  # Confidence thresholds
+  thresholds:
+    min_confidence: 0.7          # Minimum OCR confidence (τ_C)
+    min_validation_confidence: 0.7  # Overall validation threshold (τ_valid)
+    layout_aspect_ratio: 5.0     # Single-line vs multi-line decision (τ_layout)
   
-  postprocess:
-    regex_pattern: "^[A-Z]{4}[0-9]{6}[0-9]$"
-    min_confidence: 0.7
-    apply_corrections: true
-    validate_check_digit: true
-    
-  char_corrections:
-    owner_code:  # First 4 letters
-      "0": "O"
-      "1": "I"
-      "8": "B"
-      "5": "S"
-    serial_number:  # Last 7 digits
-      "O": "0"
-      "I": "1"
-      "B": "8"
-      "S": "5"
+  # Layout detection
+  layout:
+    single_line_aspect_ratio_min: 5.0
+    single_line_aspect_ratio_max: 9.0
+    multi_line_aspect_ratio_min: 2.5
+    multi_line_aspect_ratio_max: 4.5
+  
+  # Character correction
+  correction:
+    enabled: true
+    rules:
+      owner_code:  # Positions 1-4 (letters only)
+        "0": "O"
+        "1": "I"
+        "5": "S"
+        "8": "B"
+      serial:  # Positions 5-11 (digits only)
+        "O": "0"
+        "I": "1"
+        "S": "5"
+        "B": "8"
+  
+  # ISO 6346 validation
+  check_digit:
+    enabled: true
+    attempt_correction: true  # Try single-char substitutions if invalid
+    max_correction_attempts: 10
+  
+  # Output options
+  output:
+    include_raw_text: true
+    include_bounding_boxes: true
+    include_character_confidences: true
 ```
 
 ---
 
-## Fine-Tuning Strategy
+## Testing
 
-### Option 1: Using Existing Model (Recommended for MVP)
+### Run Unit Tests
 
-- Use pre-trained PaddleOCR model
-- Rely on post-processing for corrections
-- Fast deployment
+```bash
+# Test check digit calculation
+uv run pytest tests/ocr/test_validator.py
 
-### Option 2: Fine-Tuning on Container IDs
+# Test character correction
+uv run pytest tests/ocr/test_corrector.py
 
-If accuracy is insufficient:
+# Test full pipeline
+uv run pytest tests/ocr/test_processor.py
+```
 
-1. **Collect Training Data**:
-   - Extract 500-1000 rectified ID images
-   - Manually annotate text
-   - Split into train/val/test
+### Validation Dataset
 
-2. **Fine-Tune**:
-   - Use PaddleOCR training framework
-   - Train on container ID-specific data
-   - Validate improvement
-
-3. **Deploy**:
-   - Replace default model with fine-tuned model
-   - Re-evaluate on test set
+Use test set from `data/interim/test_master.json`:
+- **Ground truth container IDs** (manually verified)
+- **Module 4 aligned images** (quality-checked)
+- **Layout diversity** (70% single-line, 30% multi-line)
 
 ---
 
-## Success Criteria
+## Troubleshooting
 
-| Metric | Target |
-|--------|--------|
-| Character Accuracy | > 99% |
-| Word Accuracy (Full ID) | > 95% |
-| Processing Time | < 100ms |
-| False Positive Rate | < 2% |
+### Issue: Low OCR Confidence
+
+**Symptom**: `rejection_reason.code = "LOW_CONFIDENCE"`
+
+**Causes:**
+- Module 4 passed image with marginal quality (near thresholds)
+- Unusual font/style on container
+- Damage or occlusion on container ID
+
+**Solutions:**
+1. Lower `min_confidence` threshold (not recommended below 0.6)
+2. Check Module 4 quality metrics (`contrast`, `sharpness`)
+3. Manual review of rejected cases
+
+### Issue: Check Digit Mismatch
+
+**Symptom**: `rejection_reason.code = "CHECK_DIGIT_MISMATCH"`
+
+**Causes:**
+- OCR misread one or more characters
+- Container ID is genuinely invalid (damaged/incorrect marking)
+
+**Solutions:**
+1. Enable `attempt_correction: true` in config (tries single-char fixes)
+2. Review `check_digit_expected` vs `check_digit_actual` in validation_metrics
+3. Check `raw_text` for obvious OCR errors (e.g., "MSKU12345O7" with letter O)
+
+### Issue: Invalid Format After Correction
+
+**Symptom**: `rejection_reason.code = "INVALID_FORMAT"`
+
+**Causes:**
+- Text extracted is not 11 characters
+- Contains unexpected characters (spaces, hyphens, special symbols)
+- Multiple text regions detected (confusion)
+
+**Solutions:**
+1. Check `raw_text` field for actual OCR output
+2. Verify Module 4 alignment quality (misaligned text may be truncated)
+3. Adjust `text_score` in RapidOCR config (lower = more permissive detection)
 
 ---
 
-## Error Handling
+## Integration with Full Pipeline
 
-### Low Confidence Output
+### End-to-End Example
 
 ```python
-if confidence < 0.7:
-    return {
-        "status": "low_confidence",
-        "container_id": None,
-        "raw_text": raw_text,
-        "confidence": confidence,
-        "action": "manual_review_required"
-    }
-```
+from pathlib import Path
+import cv2
+from src.detection import DetectionProcessor
+from src.localization import LocalizationProcessor
+from src.alignment import AlignmentProcessor
+from src.ocr import OCRProcessor
 
-### Invalid Format After Corrections
+# Initialize all modules
+detector = DetectionProcessor()
+localizer = LocalizationProcessor()
+aligner = AlignmentProcessor()
+ocr = OCRProcessor()
 
-```python
-if not validate_format(corrected_text):
-    return {
-        "status": "invalid_format",
-        "container_id": None,
-        "raw_text": raw_text,
-        "action": "manual_review_required"
-    }
-```
+# Load image
+image = cv2.imread("container_door.jpg")
 
-### Check Digit Mismatch
+# Module 1: Detect container door
+det_result = detector.process(image)
+if not det_result.is_pass():
+    print("Detection failed")
+    exit(1)
 
-```python
-if not validate_check_digit(container_id):
-    return {
-        "status": "check_digit_error",
-        "container_id": container_id,
-        "confidence": confidence,
-        "action": "flag_for_review"
-    }
-```
+# Module 3: Localize container ID keypoints
+loc_result = localizer.process(det_result.cropped_image)
+if not loc_result.is_pass():
+    print("Localization failed")
+    exit(1)
 
----
+# Module 4: Align container ID region
+align_result = aligner.process(det_result.cropped_image, loc_result.keypoints)
+if not align_result.is_pass():
+    print("Alignment failed")
+    exit(1)
 
-## Integration with Pipeline
-
-```python
-# Full pipeline example
-def extract_container_id(image_path: str) -> dict:
-    # Module 1: Detection
-    door_bbox = detect_door(image_path)
-    
-    # Module 2: Quality
-    quality = assess_quality(image_path, door_bbox)
-    if quality['quality_gate'] == 'fail':
-        return {'status': 'quality_failed'}
-    
-    # Module 3: Localization
-    keypoints = localize_id(image_path, door_bbox)
-    
-    # Module 4: Alignment
-    rectified_image = rectify_id(image_path, keypoints)
-    
-    # Module 5: OCR (THIS MODULE)
-    result = extract_text_ocr(rectified_image)
-    
-    return result
+# Module 5: Extract container ID
+ocr_result = ocr.process(align_result)
+if ocr_result.is_pass():
+    print(f"✅ Success: {ocr_result.container_id}")
+    print(f"   Confidence: {ocr_result.confidence:.2%}")
+    print(f"   Check Digit Valid: {ocr_result.validation_metrics.check_digit_valid}")
+else:
+    print(f"❌ OCR Failed: {ocr_result.rejection_reason.message}")
 ```
 
 ---
 
-## Next Steps
+## Future Enhancements
 
-1. Complete Modules 3 & 4
-2. Install PaddleOCR and test
-3. Implement post-processing pipeline
-4. Evaluate on test set
-5. Fine-tune if needed
+### Owner Code Dictionary Validation
+
+**Motivation**: Owner codes are registered by BIC (Bureau International des Containers). Validating against a whitelist (~10,000 codes) can reduce false positives.
+
+**Implementation Plan:**
+- Download official BIC code list
+- Add validation stage after format check
+- Weight confidence score based on dictionary match
+
+### Fine-Tuning RapidOCR
+
+**Motivation**: Pre-trained PaddleOCR models are general-purpose. Fine-tuning on container-specific data may improve accuracy.
+
+**Approach:**
+- Convert aligned images + ground truth to PaddleOCR format
+- Fine-tune recognition model (10-20 epochs)
+- Benchmark against baseline
+
+### Multi-Hypothesis Beam Search
+
+**Motivation**: When confidence is low, explore multiple OCR candidates and rank by check digit validity.
+
+**Algorithm:**
+1. Extract top-K text hypotheses
+2. Apply correction + validation to each
+3. Return best valid candidate
+
+---
+
+## API Reference
+
+### OCRProcessor
+
+```python
+class OCRProcessor:
+    """Main OCR processing class."""
+    
+    def __init__(self, config_path: Optional[Path] = None):
+        """Initialize processor with optional custom config."""
+        pass
+    
+    def process(self, alignment_result: AlignmentResult) -> OCRResult:
+        """
+        Extract and validate container ID from aligned image.
+        
+        Args:
+            alignment_result: Output from Module 4 (must have decision=PASS)
+        
+        Returns:
+            OCRResult with validation metrics and decision
+        """
+        pass
+    
+    def process_batch(self, alignment_results: List[AlignmentResult]) -> List[OCRResult]:
+        """Process multiple images in batch (more efficient)."""
+        pass
+```
+
+### Validation Functions
+
+```python
+def calculate_check_digit(container_id_prefix: str) -> int:
+    """Calculate ISO 6346 check digit for first 10 characters."""
+    pass
+
+def validate_check_digit(container_id: str) -> bool:
+    """Validate 11-character container ID against ISO 6346."""
+    pass
+
+def correct_container_id(raw_text: str) -> str:
+    """Apply domain-aware character corrections."""
+    pass
+```
 
 ---
 
 ## References
 
-- [PaddleOCR Documentation](https://github.com/PaddlePaddle/PaddleOCR)
-- [ISO 6346 Standard](https://www.iso.org/standard/83558.html)
-- [Container ID Check Digit Algorithm](https://www.bic-code.org/check-digit-calculator/)
+1. **ISO 6346:1995**: Freight containers — Coding, identification and marking
+2. **BIC Code Database**: https://www.bic-code.org/
+3. **PaddleOCR Documentation**: https://github.com/PaddlePaddle/PaddleOCR
+4. **RapidOCR GitHub**: https://github.com/RapidAI/RapidOCR
 
 ---
 
-**Module Owner**: TBD  
-**Estimated Start Date**: TBD (after Module 4)
+## Support & Contribution
 
+For technical details, see [technical-specification.md](technical-specification.md).
+
+For implementation roadmap, see [implementation-plan.md](implementation-plan.md).
+
+**Project Repository**: [container-id-research](https://github.com/your-org/container-id-research)

@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 from src.ocr.config_loader import OCREngineConfig
-from src.ocr.engine import OCREngine, OCREngineResult
+from src.ocr.engine_rapidocr import OCREngine, OCREngineResult
 from src.ocr.types import LayoutType
 
 
