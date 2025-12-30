@@ -144,22 +144,50 @@ The Container ID Extraction system is a production-ready, multi-stage computer v
 
 #### Input/Output Contract
 
-**Input Type**: `np.ndarray`
-- **Format**: BGR uint8 array (OpenCV standard)
+**Input Type**: `ImageBuffer` (from `src.common.types`)
+- **Format**: BGR uint8 array wrapped in Pydantic model (OpenCV standard)
 - **Shape**: (H, W, 3) where $H, W \in [640, 4096]$
 - **Color Space**: BGR (Blue-Green-Red channel order)
 - **Pixel Range**: [0, 255]
+- **Type Safety**: Pydantic validation ensures correct format and dimensions
 
-**Output Type**: `Optional[Tuple[Tuple[int, int, int, int], float]]`
-- **Success Case**: (($x_1$, $y_1$, $x_2$, $y_2$), confidence)
-  - $x_1$, $y_1$: Top-left corner (pixels, 0-indexed)
-  - $x_2$, $y_2$: Bottom-right corner (pixels, exclusive)
+**Output Type**: `Dict` with structured format
+- **Success Case**:
+  ```python
+  {
+      "status": "SUCCESS",
+      "original_shape": [height, width],  # List[int]
+      "detections": [
+          {
+              "bbox_tight": [x_min, y_min, x_max, y_max],  # List[int]
+              "confidence": float,  # ∈ [0, 1]
+              "class_id": int  # Optional, if include_class_id=True
+          }
+      ]
+  }
+  ```
+  - `bbox_tight`: [$x_1$, $y_1$, $x_2$, $y_2$] in pixel coordinates (0-indexed)
   - `confidence`: Detection confidence $\in [0, 1]$
-- **Failure Case**: `None` (no detection above threshold)
+  - Detections are sorted by confidence (highest first) if configured
+- **Failure Case**:
+  ```python
+  {
+      "status": "FAILED",
+      "original_shape": [height, width],
+      "detections": []
+  }
+  ```
 
 **Configuration**:
-- `model_path`: Path to YOLOv11 weights (default: `weights/detection/best.pt`)
-- `conf_threshold`: Minimum confidence (default: 0.80)
+- **Config File**: `src/detection/config.yaml` (centralized configuration)
+- **Model Path**: Default `weights/detection/best.pt` (configurable via config file)
+- **Inference Parameters** (from `config.yaml`):
+  - `conf_threshold`: Minimum confidence (default: 0.25, matches YOLO validation)
+  - `iou_threshold`: NMS IoU threshold (default: 0.45)
+  - `max_detections`: Maximum detections to return (default: 1)
+  - `image_size`: Input image size (default: 640)
+  - `device`: Device selection - "auto" (auto-detects CUDA/CPU), "cpu", "cuda", "mps"
+- **Device Auto-Detection**: When `device="auto"`, automatically falls back to CPU if CUDA unavailable
 
 #### Performance Metrics
 
@@ -176,27 +204,45 @@ The Container ID Extraction system is a production-ready, multi-stage computer v
 
 ```python
 from src.detection import DetectionProcessor
+from src.common.types import ImageBuffer
 import cv2
 
-# Initialize processor (loads trained model)
-processor = DetectionProcessor(
-    model_path="weights/detection/best.pt",
-    conf_threshold=0.80
-)
+# Initialize processor (loads config from src/detection/config.yaml)
+processor = DetectionProcessor()
+# Or with custom model path:
+# processor = DetectionProcessor(model_path=Path("custom_model.pt"))
+
+# Load and wrap image in ImageBuffer
+image = cv2.imread("container_scene.jpg")  # BGR format
+img_buffer = ImageBuffer(data=image)
 
 # Process image
-image = cv2.imread("container_scene.jpg")  # BGR format
-result = processor.process(image)
+result = processor.process(img_buffer)
+# Or with custom confidence threshold override:
+# result = processor.process(img_buffer, conf_threshold=0.5)
 
-if result is not None:
-    (x1, y1, x2, y2), confidence = result
-    print(f"Door detected at ({x1}, {y1}) $\rightarrow$ ({x2}, {y2})")
-    print(f"Confidence: {confidence:.2%}")
+if result["status"] == "SUCCESS":
+    detections = result["detections"]
+    print(f"✓ Detected {len(detections)} container door(s)")
+    
+    # Get first detection (highest confidence)
+    detection = detections[0]
+    bbox = detection["bbox_tight"]  # [x_min, y_min, x_max, y_max]
+    confidence = detection["confidence"]
+    x_min, y_min, x_max, y_max = bbox
+    
+    print(f"  BBox: ({x_min}, {y_min}) → ({x_max}, {y_max})")
+    print(f"  Confidence: {confidence:.2%}")
     
     # Crop door region for Module 2
-    door_roi = image[y1:y2, x1:x2]
+    door_roi = image[y_min:y_max, x_min:x_max]
+    
+    # Access original image dimensions
+    original_shape = result["original_shape"]  # [height, width]
+    print(f"  Original image size: {original_shape[1]}×{original_shape[0]}")
 else:
-    print("No container door detected")
+    print("✗ No container door detected")
+    print(f"  Status: {result['status']}")
 ```
 
 ---
@@ -695,7 +741,7 @@ class OCRResult:
 
 ```python
 from src.ocr import OCRProcessor, DecisionStatus
-from src.alignment.types import AlignmentResult
+from src.alignment.schemas import AlignmentResult
 
 # Initialize processor
 processor = OCRProcessor()  # Uses default config or provide config_path
@@ -738,19 +784,27 @@ This section defines the **precise data contracts** between modules to ensure se
 **Contract**:
 ```python
 # Module 1 output
-detection_result: Optional[Tuple[Tuple[int, int, int, int], float]]
-if detection_result is not None:
-    bbox, confidence = detection_result
-    # bbox format: (x1, y1, x2, y2) - pixel coordinates, 0-indexed
-    
-    # Module 2 input
-    quality_result = quality_processor.process(image, bbox)
+detection_result: Dict[str, Any]
+if detection_result["status"] == "SUCCESS":
+    detections = detection_result["detections"]
+    if len(detections) > 0:
+        # Get first detection (highest confidence)
+        detection = detections[0]
+        bbox_list = detection["bbox_tight"]  # [x_min, y_min, x_max, y_max]
+        confidence = detection["confidence"]
+        
+        # Convert to tuple for Module 2 (if needed)
+        bbox = tuple(bbox_list)  # (x_min, y_min, x_max, y_max)
+        
+        # Module 2 input
+        quality_result = quality_processor.process(image, bbox)
 ```
 
 **Key Points**:
 - BBox coordinates are **absolute pixels** in original image space
-- BBox format is `(x1, y1, x2, y2)`, NOT `(x, y, w, h)`
+- BBox format is `[x_min, y_min, x_max, y_max]` (list) from Module 1, can be converted to tuple
 - Confidence score is informational only (not used by Module 2)
+- `original_shape` from Module 1 can be used for geometric validation in Module 2
 
 ---
 
@@ -875,11 +929,15 @@ ocr_processor = OCRProcessor()
 image = cv2.imread("container_scene.jpg")
 
 # Module 1: Detection
-detection_result = detector.process(image)
-if detection_result is None:
+from src.common.types import ImageBuffer
+img_buffer = ImageBuffer(data=image)
+detection_result = detector.process(img_buffer)
+if detection_result["status"] != "SUCCESS":
     print("No container door detected")
     exit(1)
-bbox, conf = detection_result
+detection = detection_result["detections"][0]
+bbox = detection["bbox_tight"]  # [x_min, y_min, x_max, y_max]
+conf = detection["confidence"]
 print(f"✓ Module 1: Door detected at {bbox}, conf={conf:.2%}")
 
 # Module 2: Quality Assessment
@@ -969,7 +1027,7 @@ User Image (BGR, $H \times W \times 3$)
     ↓
 [Module 1: Detection]
     ↓
-BBox (x1, y1, x2, y2) + Confidence
+Structured Dict: {status, original_shape, detections: [{bbox_tight, confidence}]}
     ↓
 [Module 2: Quality Assessment]
     ↓
@@ -1008,8 +1066,21 @@ Each module defines strict dataclasses for inputs/outputs to ensure type safety 
 
 ```python
 # src/detection/processor.py
-# No custom types - uses primitive tuples
-# Output: Optional[Tuple[Tuple[int, int, int, int], float]]
+# Input: ImageBuffer (from src.common.types)
+from src.common.types import ImageBuffer
+
+# Output: Dict with structured format
+{
+    "status": "SUCCESS" | "FAILED",
+    "original_shape": [height, width],  # List[int]
+    "detections": [
+        {
+            "bbox_tight": [x_min, y_min, x_max, y_max],  # List[int]
+            "confidence": float,  # ∈ [0, 1]
+            "class_id": int  # Optional
+        }
+    ]
+}
 ```
 
 #### Module 2 Types
@@ -1409,6 +1480,27 @@ wandb:
 
 ### Module Configuration Files
 
+Detection, Quality, and OCR modules use dedicated config files:
+
+**Detection Config** (`src/detection/config.yaml`):
+```yaml
+inference:
+  conf_threshold: 0.25  # Default: matches YOLO validation
+  iou_threshold: 0.45
+  max_detections: 1
+  image_size: 640
+  device: "auto"  # Auto-detects CUDA/CPU
+
+model:
+  path: "weights/detection/best.pt"
+  architecture: "yolov11s"
+
+output:
+  include_original_shape: true
+  include_class_id: true
+  sort_by_confidence: true
+```
+
 Quality and OCR modules use dedicated config files:
 
 **Quality Config** (`src/door_quality/config/default.yaml`):
@@ -1478,7 +1570,8 @@ ocr:
 ### Module-Specific Rejection Taxonomy
 
 **Module 1: Detection**
-- `None` returned: No container door detected above confidence threshold
+- `status: "FAILED"`: No container door detected above confidence threshold
+- Returns structured dict with `status`, `original_shape`, and empty `detections` list
 
 **Module 2: Quality**
 - `GEOMETRIC_INVALID`: BBox area ratio or dimensions out of range

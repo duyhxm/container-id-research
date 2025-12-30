@@ -1,0 +1,69 @@
+# Detection Module Configuration
+# Module 1: Container Door Detection
+#
+# This file contains all tunable parameters for the detection inference pipeline.
+# These values can be adjusted to fine-tune model performance during inference.
+
+# ============================================================================
+# INFERENCE CONFIGURATION
+# ============================================================================
+inference:
+  # Confidence threshold for detection (0.0-1.0)
+  # Only detections with confidence >= this value will be returned
+  # Lower values = more detections (higher recall, lower precision)
+  # Higher values = fewer detections (lower recall, higher precision)
+  # Default: 0.25 (matches YOLO validation default, good for demo/testing)
+  # Production: 0.5-0.8 (higher precision, fewer false positives)
+  conf_threshold: 0.25
+  
+  # IoU threshold for Non-Maximum Suppression (NMS) (0.0-1.0)
+  # Detections with IoU > this value will be suppressed (only highest confidence kept)
+  # Lower values = more aggressive suppression (fewer overlapping boxes)
+  # Higher values = less suppression (more overlapping boxes allowed)
+  iou_threshold: 0.45
+  
+  # Maximum number of detections to return
+  # Set to -1 to return all detections above conf_threshold
+  # Typically only 1 container door per image, but can be increased for batch processing
+  max_detections: 1
+  
+  # Input image size for model inference
+  # YOLOv11 standard sizes: 320, 640, 1280
+  # Larger = better accuracy but slower inference
+  # Smaller = faster inference but may miss small objects
+  image_size: 640
+  
+  # Device for inference: "auto", "cpu", "cuda", "mps" (Apple Silicon)
+  # "auto" will automatically select best available device
+  device: "auto"
+  
+  # Verbose logging during inference
+  # Set to true for detailed prediction logs
+  verbose: false
+
+# ============================================================================
+# MODEL CONFIGURATION
+# ============================================================================
+model:
+  # Path to model weights file (relative to project root or absolute path)
+  # Default: weights/detection/best.pt
+  # Can be overridden when initializing DetectionProcessor
+  path: "weights/detection/best.pt"
+  
+  # Model architecture (for reference, not used if path is provided)
+  # Options: "yolov11n", "yolov11s", "yolov11m", "yolov11l", "yolov11x"
+  architecture: "yolov11s"
+
+# ============================================================================
+# OUTPUT CONFIGURATION
+# ============================================================================
+output:
+  # Include original image shape in output (required for Module 2 geometric validation)
+  include_original_shape: true
+  
+  # Include class_id in detection results
+  include_class_id: true
+  
+  # Sort detections by confidence (highest first)
+  sort_by_confidence: true
+
