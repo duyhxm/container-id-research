@@ -666,12 +666,29 @@ def train_detection_model(config_path: Path) -> Dict[str, Any]:
         f"Training: {train_args['epochs']} epochs, batch={train_args['batch']}, lr={train_args['lr0']}"
     )
 
+    # CRITICAL: Finish WandB run BEFORE training to allow DDP workers to resume
+    # This prevents timeout errors when DDP workers try to init WandB
+    # Environment variables (WANDB_RUN_ID, WANDB_RESUME="allow") are already set,
+    # so Ultralytics will resume this run in DDP workers
+    wandb_run_id = None
+    wandb_run_name = None
+    wandb_project = None
+    if active_run is not None:
+        wandb_run_id = active_run.id
+        wandb_run_name = active_run.name
+        wandb_project = active_run.project
+        logger.info("-" * 60)
+        logger.info("Finishing WandB run before training to allow DDP resume...")
+        logger.info(f"Run ID: {wandb_run_id}")
+        logger.info(f"Run name: {wandb_run_name}")
+        logger.info("Environment variables are set - Ultralytics will resume this run")
+        active_run.finish()
+        logger.info("WandB run finished. DDP workers will resume it using env vars.")
+
     # Train with WandB configured directly
     logger.info("-" * 60)
-    logger.info("Starting training with WandB configured directly...")
-    if active_run is not None:
-        logger.info(f"Active WandB run: {active_run.name} ({active_run.url})")
-        logger.info("Ultralytics will use this run for logging")
+    logger.info("Starting training...")
+    logger.info("Ultralytics will resume WandB run using environment variables")
 
     start_time = None
     end_time = None
@@ -680,7 +697,7 @@ def train_detection_model(config_path: Path) -> Dict[str, Any]:
     try:
         start_time = datetime.now()
         # model.train() will use WandB project and name from train_args
-        # This ensures correct run name and real-time logging
+        # DDP workers will resume the finished run using WANDB_RUN_ID env var
         results = model.train(**train_args)
         end_time = datetime.now()
 
@@ -702,14 +719,15 @@ def train_detection_model(config_path: Path) -> Dict[str, Any]:
     finally:
         # CRITICAL: Always cleanup WandB session in finally block
         # This ensures proper cleanup even on errors or interruptions
-        if active_run is not None:
+        # Note: active_run was finished before training, so we need to re-init if needed
+        if wandb_run_id is not None:
             try:
                 import wandb
 
-                # Check if run is still active (Ultralytics might have finished it)
+                # Check if run is still active (Ultralytics might have re-opened it)
                 run_still_active = (
                     wandb.run is not None
-                    and wandb.run.id == active_run.id
+                    and wandb.run.id == wandb_run_id
                     and not wandb.run.sweep_id  # Not a sweep run
                 )
 
@@ -720,9 +738,9 @@ def train_detection_model(config_path: Path) -> Dict[str, Any]:
                     )
                     try:
                         current_run = wandb.init(
-                            id=active_run.id,
-                            project=active_run.project,
-                            name=active_run.name,
+                            id=wandb_run_id,
+                            project=wandb_project,
+                            name=wandb_run_name,
                             resume="must",
                         )
                         run_still_active = True
