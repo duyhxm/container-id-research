@@ -438,11 +438,21 @@ def train_detection_model(config_path: Path) -> Dict[str, Any]:
     # Configure Ultralytics WandB settings
     logger.info("Configuring Ultralytics WandB settings...")
     try:
-        settings.update({"wandb": True})
-        logger.info("WandB auto-logging ENABLED")
-        logger.info(
-            "Ultralytics will use WANDB_PROJECT and WANDB_NAME from environment"
-        )
+        if active_run is not None:
+            # CRITICAL: Disable WandB in Ultralytics when we have active session
+            # This prevents Ultralytics from trying to init new runs in DDP workers
+            # which causes timeout errors. We manage WandB session ourselves.
+            settings.update({"wandb": False})
+            logger.info("WandB auto-logging DISABLED in Ultralytics")
+            logger.info("Using active WandB session managed by setup_wandb_session()")
+            logger.info("Ultralytics metrics will be logged manually to active session")
+        else:
+            # No active session, let Ultralytics manage WandB
+            settings.update({"wandb": True})
+            logger.info("WandB auto-logging ENABLED in Ultralytics")
+            logger.info(
+                "Ultralytics will use WANDB_PROJECT and WANDB_NAME from environment"
+            )
     except Exception as e:
         logger.warning(f"Could not configure Ultralytics settings: {e}")
 
@@ -463,8 +473,12 @@ def train_detection_model(config_path: Path) -> Dict[str, Any]:
         config, data_yaml_abs, experiment_name, hardware_cfg, output_cfg
     )
 
-    # Create output directory
-    output_dir = Path(train_args["project"]) / train_args["name"]
+    # CRITICAL: When WandB session is active, remove 'name' from train_args
+    # to prevent Ultralytics from overriding the run name set in setup_wandb_session()
+    # The 'name' parameter in model.train() is used for both output directory AND WandB run name
+    # We want to keep the experiment name for WandB, but still use it for output directory
+    output_dir_name = train_args.pop("name")  # Remove to prevent override
+    output_dir = Path(train_args["project"]) / output_dir_name
     output_dir.mkdir(parents=True, exist_ok=True)
     logger.info(f"Output directory: {output_dir.absolute()}")
     logger.info(
@@ -474,6 +488,10 @@ def train_detection_model(config_path: Path) -> Dict[str, Any]:
     # Train with WandB session active
     logger.info("-" * 60)
     logger.info("Starting training with active WandB session...")
+    if active_run is not None:
+        logger.info(
+            f"WandB run name preserved: {active_run.name} (name parameter removed from train_args)"
+        )
 
     start_time = None
     end_time = None
