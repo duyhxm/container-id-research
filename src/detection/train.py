@@ -68,89 +68,54 @@ def load_full_config(config_path: Path) -> Dict[str, Any]:
     return params
 
 
-def setup_wandb_session(
+def setup_wandb_environment(
     config: Dict[str, Any], experiment_name: Optional[str]
-) -> Optional[Any]:
-    """Setup WandB session for DDP training using Hybrid Active-Session strategy.
+) -> bool:
+    """Setup WandB environment for Ultralytics integration.
 
-    Creates and maintains an active WandB run throughout training. Sets environment
-    variables immediately so DDP workers can resume the same run. The session remains
-    active until explicitly finished in the finally block.
+    Instead of creating a WandB run manually, this function sets up environment
+    and verifies authentication. Ultralytics' WandB callback will create the run
+    automatically, ensuring proper integration with its logging system.
 
     Args:
         config: Detection configuration dictionary
         experiment_name: Name for this experiment run (from config)
 
     Returns:
-        WandB run object if successful, None otherwise
+        True if WandB is configured and ready, False otherwise
 
     Note:
-        This function does NOT call run.finish(). The caller must ensure cleanup
-        in a finally block to prevent resource leaks.
+        Ultralytics will create the run in its on_pretrain_routine_start callback.
+        This approach ensures proper metrics logging integration.
     """
     try:
         import wandb
     except ImportError:
         logging.warning("WandB not installed. Skipping experiment tracking.")
-        return None
+        return False
 
-    # Check if run already exists (for resume/re-run scenarios in notebooks)
-    if wandb.run is not None:
-        active_run = wandb.run
-        logging.info(
-            f"WandB run already active: {active_run.name} ({active_run.url}). Reusing..."
-        )
-        # Update environment variables to ensure DDP workers use the same run
-        os.environ["WANDB_RUN_ID"] = active_run.id
-        os.environ["WANDB_PROJECT"] = active_run.project
-        os.environ["WANDB_NAME"] = active_run.name
-        os.environ["WANDB_RESUME"] = "allow"
-        logging.info("Environment variables updated for existing run")
-        return active_run
-
-    # Create new run
     wandb_config = config.get("wandb", {})
     if "project" not in wandb_config:
         logging.warning("wandb.project not found in config. Skipping WandB tracking.")
-        return None
+        return False
 
     try:
-        run = wandb.init(
-            project=wandb_config["project"],
-            entity=wandb_config.get("entity"),
-            name=experiment_name or wandb_config.get("name"),
-            config={
-                "model": config.get("model", {}),
-                "training": config.get("training", {}),
-                "augmentation": config.get("augmentation", {}),
-            },
-            tags=wandb_config.get("tags", []),
-            notes=wandb_config.get(
-                "notes", "YOLOv11 training for container door detection"
-            ),
-            save_code=True,
-            resume="allow",  # Allow resume for DDP workers
+        # Verify authentication without creating a run
+        api = wandb.Api()
+        logging.info(
+            f"WandB authenticated as: {api.viewer().get('username', 'unknown')}"
         )
 
-        if run is None:
-            logging.warning("WandB run initialization failed")
-            return None
+        # Log configuration details
+        logging.info("WandB configuration:")
+        logging.info(f"  Project: {wandb_config['project']}")
+        logging.info(f"  Entity: {wandb_config.get('entity', 'default')}")
+        logging.info(f"  Run name: {experiment_name or wandb_config.get('name')}")
+        logging.info("")
+        logging.info("WandB will be initialized by Ultralytics callback system")
+        logging.info("This ensures proper metrics logging integration")
 
-        # CRITICAL: Set environment variables immediately for DDP workers
-        # These are inherited by worker processes and allow them to resume the same run
-        os.environ["WANDB_RUN_ID"] = run.id
-        os.environ["WANDB_PROJECT"] = run.project
-        os.environ["WANDB_NAME"] = run.name
-        os.environ["WANDB_RESUME"] = "allow"  # Critical for DDP workers
-
-        logging.info(f"WandB run created: {run.name} ({run.url})")
-        logging.info("Environment variables set for DDP workers:")
-        logging.info(f"  WANDB_RUN_ID: {run.id}")
-        logging.info(f"  WANDB_PROJECT: {run.project}")
-        logging.info(f"  WANDB_NAME: {run.name}")
-        logging.info(f"  WANDB_RESUME: allow")
-
-        return run
+        return True
 
     except Exception as e:
         error_msg = str(e)
@@ -183,10 +148,10 @@ def setup_wandb_session(
             logging.error(f"Error: {error_msg}")
             logging.error("Please verify your WANDB_API_KEY is correct")
         else:
-            logging.warning(f"WandB initialization failed: {error_msg}")
+            logging.warning(f"WandB verification failed: {e}")
 
         logging.warning("Continuing training without WandB tracking")
-        return None
+        return False
 
 
 def move_training_outputs(
@@ -245,63 +210,6 @@ def move_training_outputs(
         logger.warning(f"Could not remove temporary directory: {e}")
 
     logger.info(f"Successfully moved {moved_count} items to: {final_dir.absolute()}")
-
-
-def log_training_metrics_from_csv(
-    csv_path: Path, active_run: Any, logger: logging.Logger
-) -> None:
-    """Read training metrics from CSV and log to WandB.
-
-    Ultralytics creates results.csv with per-epoch metrics. This function
-    reads the CSV and logs all metrics to WandB to restore full logging
-    when WandB auto-logging is disabled.
-
-    Args:
-        csv_path: Path to results.csv file
-        active_run: Active WandB run object
-        logger: Logger instance
-    """
-    if not csv_path.exists():
-        logger.warning(f"Results CSV not found: {csv_path}, skipping metrics logging")
-        return
-
-    try:
-        import wandb
-    except ImportError:
-        logger.warning("WandB not available for metrics logging")
-        return
-
-    try:
-        with open(csv_path, "r", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            metrics_logged = 0
-
-            for row in reader:
-                # Convert all numeric values and log
-                metrics_dict = {}
-                for key, value in row.items():
-                    if key == "epoch":
-                        continue  # Skip epoch, we'll use it as step
-                    try:
-                        # Try to convert to float
-                        float_val = float(value)
-                        metrics_dict[key] = float_val
-                    except (ValueError, TypeError):
-                        # Skip non-numeric values
-                        continue
-
-                if metrics_dict:
-                    # Use epoch as step for proper time series
-                    epoch = int(row.get("epoch", 0))
-                    active_run.log(metrics_dict, step=epoch)
-                    metrics_logged += 1
-
-            logger.info(
-                f"Logged {metrics_logged} epochs of training metrics from {csv_path.name}"
-            )
-
-    except Exception as e:
-        logger.warning(f"Failed to log metrics from CSV: {e}", exc_info=True)
 
 
 def extract_final_metrics(
@@ -581,9 +489,9 @@ def train_detection_model(config_path: Path) -> Dict[str, Any]:
     logger.info(f"Model: {model_name}")
     logger.info(f"Dataset: {data_yaml_abs}")
 
-    # Setup WandB session
-    logger.info("Setting up WandB session...")
-    active_run = setup_wandb_session(config, experiment_name)
+    # Setup WandB environment for Ultralytics integration
+    logger.info("Setting up WandB environment...")
+    wandb_enabled = setup_wandb_environment(config, experiment_name)
 
     # Import YOLO
     logger.debug("Importing Ultralytics YOLO (after env vars set)...")
@@ -596,21 +504,21 @@ def train_detection_model(config_path: Path) -> Dict[str, Any]:
     # Configure Ultralytics WandB settings
     logger.info("Configuring Ultralytics WandB settings...")
     try:
-        if active_run is not None:
+        from ultralytics.utils import SETTINGS
+
+        settings = SETTINGS.copy()
+        if wandb_enabled:
             # Enable WandB in Ultralytics
-            # Ultralytics will use project and name from train_args (configured below)
-            # which match the active WandB run
+            # Ultralytics callbacks will handle run creation and logging
             settings.update({"wandb": True})
-            logger.info("WandB auto-logging ENABLED in Ultralytics")
+            logger.info("WandB integration ENABLED in Ultralytics")
             logger.info(
-                "Ultralytics will use project and name from train_args matching active run"
+                "Ultralytics callbacks will create run and log metrics automatically"
             )
         else:
-            # No WandB session, disable WandB in Ultralytics
+            # Disable WandB in Ultralytics
             settings.update({"wandb": False})
-            logger.info(
-                "WandB auto-logging DISABLED in Ultralytics (no active session)"
-            )
+            logger.info("WandB integration DISABLED in Ultralytics (not configured)")
     except Exception as e:
         logger.warning(f"Could not configure Ultralytics settings: {e}")
 
@@ -631,19 +539,17 @@ def train_detection_model(config_path: Path) -> Dict[str, Any]:
         config, data_yaml_abs, experiment_name, hardware_cfg, output_cfg
     )
 
-    # CRITICAL: Configure WandB project and name directly in train_args
-    # This ensures Ultralytics uses the correct run name and project from config
-    # We'll use a temporary output directory, then move results to final location
-    if active_run is not None:
-        # Use WandB project and name directly from active run
+    # Configure WandB project and name in train_args for Ultralytics callback
+    # Ultralytics' on_pretrain_routine_start callback will use these to create the run
+    if wandb_enabled:
         wandb_config = config.get("wandb", {})
-        train_args["project"] = wandb_config["project"]  # WandB project
-        train_args["name"] = active_run.name  # WandB run name (experiment name)
-        logger.info(f"WandB project configured: {wandb_config['project']}")
-        logger.info(f"WandB run name configured: {active_run.name}")
-        logger.info(
-            "Ultralytics will use these values directly, ensuring correct run name"
-        )
+        # Override project and name in train_args to match WandB config
+        # This ensures Ultralytics creates the run with correct settings
+        train_args["project"] = wandb_config["project"]
+        train_args["name"] = experiment_name or wandb_config.get("name")
+        logger.info(f"WandB project: {wandb_config['project']}")
+        logger.info(f"WandB run name: {experiment_name or wandb_config.get('name')}")
+        logger.info("Ultralytics callback will create WandB run with these settings")
 
     # Calculate final output directory (where we want results to end up)
     # Note: validated_exp_name already computed in prepare_training_args, but we need it here
@@ -666,29 +572,24 @@ def train_detection_model(config_path: Path) -> Dict[str, Any]:
         f"Training: {train_args['epochs']} epochs, batch={train_args['batch']}, lr={train_args['lr0']}"
     )
 
-    # CRITICAL: Finish WandB run BEFORE training to allow DDP workers to resume
-    # This prevents timeout errors when DDP workers try to init WandB
-    # Environment variables (WANDB_RUN_ID, WANDB_RESUME="allow") are already set,
-    # so Ultralytics will resume this run in DDP workers
-    wandb_run_id = None
-    wandb_run_name = None
-    wandb_project = None
-    if active_run is not None:
-        wandb_run_id = active_run.id
-        wandb_run_name = active_run.name
-        wandb_project = active_run.project
-        logger.info("-" * 60)
-        logger.info("Finishing WandB run before training to allow DDP resume...")
-        logger.info(f"Run ID: {wandb_run_id}")
-        logger.info(f"Run name: {wandb_run_name}")
-        logger.info("Environment variables are set - Ultralytics will resume this run")
-        active_run.finish()
-        logger.info("WandB run finished. DDP workers will resume it using env vars.")
+    # Configure WandB for DDP training
+    # Set high init_timeout to prevent DDP worker timeout errors
+    if wandb_enabled:
+        # Set high timeout for DDP workers to prevent timeout errors
+        # Ultralytics will automatically handle DDP - only rank 0 logs metrics
+        os.environ["WANDB_INIT_TIMEOUT"] = "300"  # 5 minutes
 
-    # Train with WandB configured directly
+        logger.info("-" * 60)
+        logger.info("WandB DDP configuration:")
+        logger.info("WANDB_INIT_TIMEOUT set to 300s to prevent DDP timeout")
+        logger.info("Ultralytics callback will create run and log training metrics")
+        logger.info("DDP workers will automatically sync with main process")
+
+    # Train with WandB integration
     logger.info("-" * 60)
     logger.info("Starting training...")
-    logger.info("Ultralytics will resume WandB run using environment variables")
+    if wandb_enabled:
+        logger.info("Ultralytics callback will create WandB run on training start")
 
     start_time = None
     end_time = None
@@ -717,73 +618,24 @@ def train_detection_model(config_path: Path) -> Dict[str, Any]:
         logger.error(f"Training failed: {e}", exc_info=True)
         raise
     finally:
-        # CRITICAL: Always cleanup WandB session in finally block
-        # This ensures proper cleanup even on errors or interruptions
-        # Note: active_run was finished before training, so we need to re-init if needed
-        if wandb_run_id is not None:
+        end_time = datetime.now()
+        logger.info("-" * 60)
+
+        # Move outputs (WandB run is managed by Ultralytics callbacks)
+        if temp_output_dir != final_output_dir:
             try:
-                import wandb
-
-                # Check if run is still active (Ultralytics might have re-opened it)
-                run_still_active = (
-                    wandb.run is not None
-                    and wandb.run.id == wandb_run_id
-                    and not wandb.run.sweep_id  # Not a sweep run
-                )
-
-                if not run_still_active:
-                    # Re-init run to log final metrics
-                    logger.info(
-                        "Re-initializing WandB run for final metrics logging..."
-                    )
-                    try:
-                        current_run = wandb.init(
-                            id=wandb_run_id,
-                            project=wandb_project,
-                            name=wandb_run_name,
-                            resume="must",
-                        )
-                        run_still_active = True
-                    except Exception as e:
-                        logger.warning(f"Could not re-init WandB run: {e}")
-                        run_still_active = False
-                        current_run = None
-                else:
-                    current_run = wandb.run
-
-                if run_still_active and current_run is not None:
-                    # Log final summary metrics if training completed
-                    if start_time is not None and end_time is not None:
-                        training_duration = (end_time - start_time).total_seconds()
-                        final_metrics_dict = extract_final_metrics(
-                            results, training_duration, logger
-                        )
-
-                        # Note: Per-epoch metrics are already logged by Ultralytics WandB auto-logging
-                        # Only log from CSV as fallback if needed (currently disabled for simplicity)
-
-                        # Log final summary metrics to WandB
-                        try:
-                            # Set as summary metrics (appear in run summary)
-                            for key, value in final_metrics_dict.items():
-                                current_run.summary[key] = value
-                            logger.info("Final summary metrics logged to WandB")
-                        except Exception as e:
-                            logger.warning(f"Could not log final metrics: {e}")
-
-                    # Finish the run
-                    exit_code = 0 if results is not None else 1
-                    current_run.finish(exit_code=exit_code)
-                    logger.info("WandB session finished successfully")
-                else:
-                    logger.info(
-                        "WandB run already finished or unavailable, skipping cleanup"
-                    )
-
-            except ImportError:
-                logger.warning("WandB not available for cleanup")
+                move_training_outputs(temp_output_dir, final_output_dir, logger)
             except Exception as e:
-                logger.warning(f"Error during WandB cleanup: {e}")
+                logger.error(f"Failed to move training outputs: {e}")
+                logger.info(
+                    f"Training outputs may remain in: {temp_output_dir.absolute()}"
+                )
+        else:
+            logger.info(f"Training outputs saved to: {final_output_dir.absolute()}")
+
+        # WandB run is automatically finished by Ultralytics' on_train_end callback
+        if wandb_enabled:
+            logger.info("WandB run will be finished by Ultralytics callback")
 
     # Extract metrics for return value (after finally block)
     if start_time is None or end_time is None:
