@@ -461,6 +461,33 @@ def prepare_training_args(
     }
 
 
+def apply_wandb_config_to_train_args(train_args, wandb_cfg):
+    """
+    Apply WandB project/name to training args.
+
+    This is critical for WandB callback to work properly - the callback reads
+    trainer.args.project and trainer.args.name to create the WandB run.
+
+    Args:
+        train_args: Training arguments dict
+        wandb_cfg: WandB config dict with 'project' and 'name' keys
+
+    Returns:
+        dict: Updated train_args with WandB config
+    """
+    if wandb_cfg:
+        # Override Ultralytics default project/name with WandB config
+        if "project" in wandb_cfg:
+            train_args["project"] = wandb_cfg["project"]
+        if "name" in wandb_cfg:
+            train_args["name"] = wandb_cfg["name"]
+        logger.info(
+            f"Applied WandB config to train_args: "
+            f"project='{train_args.get('project')}', name='{train_args.get('name')}'"
+        )
+    return train_args
+
+
 def train_detection_model(config_path: Path) -> Dict[str, Any]:
     """Train YOLOv11 detection model.
 
@@ -529,14 +556,23 @@ def train_detection_model(config_path: Path) -> Dict[str, Any]:
         logger.info(f"Loading pretrained model: {model_name}.pt")
         model = YOLO(f"{model_name}.pt")
 
-    # Setup WandB callback AFTER model initialization
-    logger.info("Setting up WandB callback...")
-    wandb_enabled = setup_wandb_callback(model, config, experiment_name)
+    # Prepare WandB configuration BEFORE training args
+    logger.info("Preparing WandB configuration...")
+    wandb_cfg = setup_wandb_config(config, experiment_name)
 
     # Prepare training arguments
     train_args = prepare_training_args(
         config, data_yaml_abs, experiment_name, hardware_cfg, output_cfg
     )
+
+    # Apply WandB config to train_args (critical for callback to work!)
+    train_args = apply_wandb_config_to_train_args(train_args, wandb_cfg)
+
+    # Add WandB callback AFTER train_args are configured
+    wandb_enabled = False
+    if wandb_cfg:
+        logger.info("Adding WandB callback to model...")
+        wandb_enabled = add_wandb_callback_to_model(model)
 
     # Calculate final output directory (where we want results to end up)
     # Note: validated_exp_name already computed in prepare_training_args, but we need it here
