@@ -10,10 +10,10 @@ imgsz: 640
 save: true
 save_period: -1
 cache: false
-device: '0'
+device: 0,1
 workers: 8
-project: artifacts/detection/detection_exp001_yolo11s_baseline
-name: train
+project: container-door-detection
+name: detection_exp001_yolo11s_baseline
 exist_ok: true
 pretrained: true
 optimizer: AdamW
@@ -103,4 +103,4 @@ auto_augment: randaugment
 erasing: 0.4
 cfg: null
 tracker: botsort.yaml
-save_dir: /kaggle/working/container-id-research/artifacts/detection/detection_exp001_yolo11s_baseline/train
+save_dir: /kaggle/working/container-id-research/container-door-detection/detection_exp001_yolo11s_baseline
