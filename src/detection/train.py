@@ -104,7 +104,8 @@ def setup_wandb_callback(
     try:
         # Verify authentication
         api = wandb.Api()
-        username = api.viewer().get("username", "unknown")
+        # api.viewer is a property (not a method) that returns a User object
+        username = api.viewer.username
         logging.info(f"WandB authenticated as: {username}")
 
         # Log configuration details

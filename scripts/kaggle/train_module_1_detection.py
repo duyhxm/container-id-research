@@ -557,8 +557,8 @@ def configure_wandb(secrets: Dict) -> None:
                     # Try to access project with default entity
                     try:
                         api = wandb.Api()
-                        # Get default entity from API
-                        default_entity = api.viewer().username
+                        # Get default entity from API (viewer is a property, not a method)
+                        default_entity = api.viewer.username
                         api.project(entity=default_entity, name=project)
                         logger.info(
                             f"✓ WandB project '{project}' under default entity '{default_entity}' is accessible"
