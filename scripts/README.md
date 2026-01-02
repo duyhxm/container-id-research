@@ -56,12 +56,7 @@ python scripts/run_demo.py ocr
 
 ### Utility Scripts
 
-#### `verify_config.py`
-Validate configuration files for all modules.
-
-```bash
-python scripts/verify_config.py
-```
+_No utility scripts currently available._
 
 ## 📂 Subdirectories
 
