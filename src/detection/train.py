@@ -176,14 +176,16 @@ def initialize_wandb_for_ddp(
             logging.warning("Continuing training without WandB tracking")
             return None, None, None
 
-    # Set environment variables only if run was created successfully
+    # Set environment variables for Ultralytics to adopt
+    # CRITICAL: These env vars are read by Ultralytics to set WandB project/run name
     if run_id and project and run_name:
         os.environ["WANDB_RUN_ID"] = run_id
         os.environ["WANDB_PROJECT"] = project
-        os.environ["WANDB_NAME"] = run_name
-        logging.debug(
-            f"WandB env vars set: RUN_ID={run_id}, PROJECT={project}, NAME={run_name}"
-        )
+        os.environ["WANDB_NAME"] = run_name  # Critical: Preserves run name on dashboard
+        logging.info(f"Environment variables set for DDP:")
+        logging.info(f"  WANDB_RUN_ID: {run_id}")
+        logging.info(f"  WANDB_PROJECT: {project}")
+        logging.info(f"  WANDB_NAME: {run_name}")
 
     return run_id, run_name, project
 
@@ -321,6 +323,9 @@ def prepare_training_args(
     output_cfg_validated = training_config.output
 
     # Build output directory
+    # CRITICAL: These "project" and "name" are for OUTPUT DIRECTORY only, NOT WandB!
+    # WandB project/run name is configured via environment variables (WANDB_PROJECT, WANDB_NAME)
+    # set by initialize_wandb_for_ddp(). Ultralytics will read WandB settings from env vars.
     project_name = str(Path(output_cfg_validated.base_dir) / validated_exp_name)
     run_name = output_cfg_validated.train_dir
 
@@ -356,6 +361,8 @@ def prepare_training_args(
         "mosaic": aug_cfg.mosaic,
         "mixup": aug_cfg.mixup,
         "copy_paste": aug_cfg.copy_paste,
+        # Output directory configuration (NOT WandB project/run name)
+        # WandB project/run name comes from environment variables set by initialize_wandb_for_ddp()
         "project": project_name,
         "name": run_name,
         "exist_ok": True,
@@ -419,18 +426,28 @@ def train_detection_model(config_path: Path) -> Dict[str, Any]:
     logger.info(f"Dataset: {data_yaml_abs}")
 
     # Initialize WandB (Pass-the-Baton Phase 1)
-    logger.info("Initializing experiment tracking...")
+    logger.info("Initializing experiment tracking (Pass-the-Baton Phase 1)...")
     run_id, run_name, wandb_project = initialize_wandb_for_ddp(config, experiment_name)
 
-    # Import YOLO after setting environment variables
+    # CRITICAL: Import YOLO AFTER setting environment variables
+    # This ensures Ultralytics reads WANDB_PROJECT and WANDB_NAME from environment
+    logger.debug("Importing Ultralytics YOLO (after env vars set)...")
     try:
         from ultralytics import YOLO, settings
     except ImportError:
         logger.error("Ultralytics not installed. Install with: pip install ultralytics")
         raise
 
-    settings.update({"wandb": True})
-    logger.debug("WandB auto-logging enabled for Ultralytics")
+    # Configure Ultralytics WandB settings
+    logger.info("Configuring Ultralytics WandB settings...")
+    try:
+        settings.update({"wandb": True})
+        logger.info("WandB auto-logging ENABLED")
+        logger.info(
+            "Ultralytics will use WANDB_PROJECT and WANDB_NAME from environment"
+        )
+    except Exception as e:
+        logger.warning(f"Could not configure Ultralytics settings: {e}")
 
     # Initialize model
     resume_from = config["model"].get("resume_from")
@@ -449,12 +466,17 @@ def train_detection_model(config_path: Path) -> Dict[str, Any]:
         config, data_yaml_abs, experiment_name, hardware_cfg, output_cfg
     )
 
-    # Ensure no active WandB session before training
+    # CRITICAL: Ensure no WandB session is active before training
+    # This forces Ultralytics to read from environment variables (WANDB_PROJECT, WANDB_NAME)
     try:
         import wandb
 
         if wandb.run is not None:
+            logger.warning(
+                f"Active WandB run detected: {wandb.run.name}. Finishing it..."
+            )
             wandb.finish()
+            logger.info("Previous WandB session finished")
     except ImportError:
         pass
 
@@ -541,11 +563,12 @@ def train_detection_model(config_path: Path) -> Dict[str, Any]:
         logger.warning(f"Failed to validate metrics schema: {e}, using dict")
         final_metrics = final_metrics_dict
 
-    # Log final metrics to WandB (Pass-the-Baton Phase 2)
+    # Pass-the-Baton Phase 2: Re-init WandB to log final metrics
     if run_id is not None:
         try:
             import wandb
 
+            logger.info("Re-initializing WandB for final metrics logging...")
             run = wandb.init(
                 id=run_id, project=wandb_project, name=run_name, resume="must"
             )
@@ -555,10 +578,13 @@ def train_detection_model(config_path: Path) -> Dict[str, Any]:
                 else final_metrics
             )
             run.log(metrics_to_log)
-            run.finish()
             logger.info("Final metrics logged to WandB")
+            run.finish()
+            logger.info("WandB run finished (Pass-the-Baton Phase 2 complete)")
         except (ImportError, AttributeError) as e:
             logger.warning(f"Could not log final metrics to WandB: {e}")
+    else:
+        logger.info("WandB not configured, skipping final metrics logging")
 
     # Print final metrics
     logger.info("Final Validation Metrics:")
