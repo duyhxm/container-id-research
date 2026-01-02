@@ -14,9 +14,10 @@ import json
 import logging
 import os
 import re
+import shutil
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Union
 
 import yaml
 
@@ -188,6 +189,64 @@ def setup_wandb_session(
         return None
 
 
+def move_training_outputs(
+    temp_dir: Path, final_dir: Path, logger: logging.Logger
+) -> None:
+    """Move training outputs from temporary directory to final location.
+
+    This function handles the case where Ultralytics creates output in a temporary
+    directory (based on WandB project/name) and we need to move it to the final
+    location specified in the output configuration.
+
+    Args:
+        temp_dir: Temporary output directory created by Ultralytics
+        final_dir: Final output directory from configuration
+        logger: Logger instance
+    """
+    if temp_dir == final_dir:
+        logger.info("Output directory matches final location, no move needed")
+        return
+
+    if not temp_dir.exists() or not any(temp_dir.iterdir()):
+        logger.warning(f"Temporary output directory not found or empty: {temp_dir}")
+        logger.info(f"Outputs should be in: {final_dir.absolute()}")
+        return
+
+    logger.info("-" * 60)
+    logger.info("Moving training outputs to final directory...")
+    logger.info(f"From: {temp_dir.absolute()}")
+    logger.info(f"To: {final_dir.absolute()}")
+
+    # Move all contents from temp to final directory
+    moved_count = 0
+    for item in temp_dir.iterdir():
+        dest = final_dir / item.name
+        if dest.exists():
+            if dest.is_dir():
+                shutil.rmtree(dest)
+            else:
+                dest.unlink()
+        shutil.move(str(item), str(dest))
+        logger.info(f"Moved: {item.name}")
+        moved_count += 1
+
+    # Remove temporary directory if empty
+    try:
+        if temp_dir.exists() and not any(temp_dir.iterdir()):
+            temp_dir.rmdir()
+            logger.info(f"Removed empty temporary directory: {temp_dir}")
+        elif temp_dir.exists():
+            # If not empty, try to remove parent if it's empty
+            parent_dir = temp_dir.parent
+            if parent_dir.exists() and not any(parent_dir.iterdir()):
+                parent_dir.rmdir()
+                logger.info(f"Removed empty parent directory: {parent_dir}")
+    except Exception as e:
+        logger.warning(f"Could not remove temporary directory: {e}")
+
+    logger.info(f"Successfully moved {moved_count} items to: {final_dir.absolute()}")
+
+
 def log_training_metrics_from_csv(
     csv_path: Path, active_run: Any, logger: logging.Logger
 ) -> None:
@@ -243,6 +302,52 @@ def log_training_metrics_from_csv(
 
     except Exception as e:
         logger.warning(f"Failed to log metrics from CSV: {e}", exc_info=True)
+
+
+def extract_final_metrics(
+    results: Any, training_duration: float, logger: logging.Logger
+) -> Dict[str, float]:
+    """Extract final metrics from training results.
+
+    Args:
+        results: Training results object from Ultralytics
+        training_duration: Training duration in seconds
+        logger: Logger instance
+
+    Returns:
+        Dictionary containing final metrics
+    """
+    final_metrics_dict = {"training_duration_hours": training_duration / 3600}
+
+    if results is not None and hasattr(results, "box") and results.box is not None:
+        final_metrics_dict.update(
+            {
+                "val_map50_final": (
+                    float(results.box.map50) if results.box.map50 is not None else 0.0
+                ),
+                "val_map50_95_final": (
+                    float(results.box.map) if results.box.map is not None else 0.0
+                ),
+                "val_precision_final": (
+                    float(results.box.mp) if results.box.mp is not None else 0.0
+                ),
+                "val_recall_final": (
+                    float(results.box.mr) if results.box.mr is not None else 0.0
+                ),
+            }
+        )
+    else:
+        logger.warning("Training results missing box metrics")
+        final_metrics_dict.update(
+            {
+                "val_map50_final": 0.0,
+                "val_map50_95_final": 0.0,
+                "val_precision_final": 0.0,
+                "val_recall_final": 0.0,
+            }
+        )
+
+    return final_metrics_dict
 
 
 def validate_experiment_name(name: Optional[str]) -> str:
@@ -377,10 +482,7 @@ def prepare_training_args(
     hardware_cfg_validated = training_config.hardware
     output_cfg_validated = training_config.output
 
-    # Build output directory
-    # CRITICAL: These "project" and "name" are for OUTPUT DIRECTORY only, NOT WandB!
-    # WandB project/run name is configured via environment variables (WANDB_PROJECT, WANDB_NAME)
-    # set by setup_wandb_session(). Ultralytics will read WandB settings from env vars.
+    # Build output directory (default values, may be overridden by WandB config below)
     project_name = str(Path(output_cfg_validated.base_dir) / validated_exp_name)
     run_name = output_cfg_validated.train_dir
 
@@ -416,8 +518,7 @@ def prepare_training_args(
         "mosaic": aug_cfg.mosaic,
         "mixup": aug_cfg.mixup,
         "copy_paste": aug_cfg.copy_paste,
-        # Output directory configuration (NOT WandB project/run name)
-        # WandB project/run name comes from environment variables set by setup_wandb_session()
+        # Output directory configuration (default, may be overridden by WandB config)
         "project": project_name,
         "name": run_name,
         "exist_ok": True,
@@ -480,21 +581,11 @@ def train_detection_model(config_path: Path) -> Dict[str, Any]:
     logger.info(f"Model: {model_name}")
     logger.info(f"Dataset: {data_yaml_abs}")
 
-    # Setup WandB session (Hybrid Active-Session strategy)
-    logger.info("Setting up WandB session (Hybrid Active-Session)...")
+    # Setup WandB session
+    logger.info("Setting up WandB session...")
     active_run = setup_wandb_session(config, experiment_name)
 
-    # Store run info for later re-init if needed
-    wandb_run_id = None
-    wandb_run_name = None
-    wandb_project = None
-    if active_run is not None:
-        wandb_run_id = active_run.id
-        wandb_run_name = active_run.name
-        wandb_project = active_run.project
-
-    # CRITICAL: Import YOLO AFTER setting environment variables
-    # This ensures Ultralytics reads WANDB_PROJECT and WANDB_NAME from environment
+    # Import YOLO
     logger.debug("Importing Ultralytics YOLO (after env vars set)...")
     try:
         from ultralytics import YOLO, settings
@@ -506,29 +597,19 @@ def train_detection_model(config_path: Path) -> Dict[str, Any]:
     logger.info("Configuring Ultralytics WandB settings...")
     try:
         if active_run is not None:
-            # CRITICAL: Enable WandB in Ultralytics but configure it to resume existing run
-            # Ultralytics will read WANDB_RUN_ID and WANDB_RESUME from environment
-            # to resume the active session instead of creating new runs
+            # Enable WandB in Ultralytics
+            # Ultralytics will use project and name from train_args (configured below)
+            # which match the active WandB run
             settings.update({"wandb": True})
             logger.info("WandB auto-logging ENABLED in Ultralytics")
             logger.info(
-                "Ultralytics will resume active WandB run using environment variables:"
-            )
-            logger.info(f"  WANDB_RUN_ID: {os.environ.get('WANDB_RUN_ID', 'Not set')}")
-            logger.info(
-                f"  WANDB_PROJECT: {os.environ.get('WANDB_PROJECT', 'Not set')}"
-            )
-            logger.info(f"  WANDB_NAME: {os.environ.get('WANDB_NAME', 'Not set')}")
-            logger.info(f"  WANDB_RESUME: {os.environ.get('WANDB_RESUME', 'Not set')}")
-            logger.info(
-                "DDP workers will resume the same run, preventing timeout errors"
+                "Ultralytics will use project and name from train_args matching active run"
             )
         else:
-            # No active session, let Ultralytics manage WandB
-            settings.update({"wandb": True})
-            logger.info("WandB auto-logging ENABLED in Ultralytics")
+            # No WandB session, disable WandB in Ultralytics
+            settings.update({"wandb": False})
             logger.info(
-                "Ultralytics will use WANDB_PROJECT and WANDB_NAME from environment"
+                "WandB auto-logging DISABLED in Ultralytics (no active session)"
             )
     except Exception as e:
         logger.warning(f"Could not configure Ultralytics settings: {e}")
@@ -550,49 +631,47 @@ def train_detection_model(config_path: Path) -> Dict[str, Any]:
         config, data_yaml_abs, experiment_name, hardware_cfg, output_cfg
     )
 
-    # CRITICAL: When WandB session is active, remove 'name' from train_args
-    # to prevent Ultralytics from overriding the run name set in setup_wandb_session()
-    # The 'name' parameter in model.train() is used for both output directory AND WandB run name
-    # We want to keep the experiment name for WandB, but still use it for output directory
-    output_dir_name = train_args.pop("name")  # Remove to prevent override
-    output_dir = Path(train_args["project"]) / output_dir_name
-    output_dir.mkdir(parents=True, exist_ok=True)
-    logger.info(f"Output directory: {output_dir.absolute()}")
+    # CRITICAL: Configure WandB project and name directly in train_args
+    # This ensures Ultralytics uses the correct run name and project from config
+    # We'll use a temporary output directory, then move results to final location
+    if active_run is not None:
+        # Use WandB project and name directly from active run
+        wandb_config = config.get("wandb", {})
+        train_args["project"] = wandb_config["project"]  # WandB project
+        train_args["name"] = active_run.name  # WandB run name (experiment name)
+        logger.info(f"WandB project configured: {wandb_config['project']}")
+        logger.info(f"WandB run name configured: {active_run.name}")
+        logger.info(
+            "Ultralytics will use these values directly, ensuring correct run name"
+        )
+
+    # Calculate final output directory (where we want results to end up)
+    # Note: validated_exp_name already computed in prepare_training_args, but we need it here
+    validated_exp_name = validate_experiment_name(experiment_name)
+    final_output_dir = (
+        Path(output_cfg.get("base_dir", "artifacts/detection"))
+        / validated_exp_name
+        / output_cfg.get("train_dir", "train")
+    )
+    final_output_dir.mkdir(parents=True, exist_ok=True)
+    logger.info(f"Final output directory: {final_output_dir.absolute()}")
+
+    # Temporary directory where Ultralytics will write (will be moved later)
+    # This is the directory that Ultralytics creates based on project/name
+    temp_output_dir = Path(train_args["project"]) / train_args["name"]
+    logger.info(
+        f"Temporary output directory (Ultralytics): {temp_output_dir.absolute()}"
+    )
     logger.info(
         f"Training: {train_args['epochs']} epochs, batch={train_args['batch']}, lr={train_args['lr0']}"
     )
 
-    # Train with WandB session active
+    # Train with WandB configured directly
     logger.info("-" * 60)
-    logger.info("Starting training with active WandB session...")
-
-    # CRITICAL: Finish active run before training to allow Ultralytics to resume
-    # This enables real-time logging while preventing DDP timeout
+    logger.info("Starting training with WandB configured directly...")
     if active_run is not None:
-        logger.info(
-            f"WandB run name preserved: {active_run.name} (name parameter removed from train_args)"
-        )
-        logger.info("Finishing active WandB run to allow Ultralytics resume...")
-        run_id = active_run.id
-        run_name = active_run.name
-        run_project = active_run.project
-
-        # Finish the run but keep env vars for Ultralytics to resume
-        active_run.finish()
-        logger.info(
-            "Active WandB run finished. Ultralytics will resume using env vars."
-        )
-
-        # Ensure env vars are still set (they should be, but double-check)
-        os.environ["WANDB_RUN_ID"] = run_id
-        os.environ["WANDB_PROJECT"] = run_project
-        os.environ["WANDB_NAME"] = run_name
-        os.environ["WANDB_RESUME"] = "allow"
-        logger.info("Environment variables confirmed for Ultralytics resume:")
-        logger.info(f"  WANDB_RUN_ID: {run_id}")
-        logger.info(f"  WANDB_PROJECT: {run_project}")
-        logger.info(f"  WANDB_NAME: {run_name}")
-        logger.info(f"  WANDB_RESUME: allow")
+        logger.info(f"Active WandB run: {active_run.name} ({active_run.url})")
+        logger.info("Ultralytics will use this run for logging")
 
     start_time = None
     end_time = None
@@ -600,10 +679,19 @@ def train_detection_model(config_path: Path) -> Dict[str, Any]:
 
     try:
         start_time = datetime.now()
-        # model.train() will resume the WandB run using environment variables
-        # This enables real-time logging while preventing DDP timeout
+        # model.train() will use WandB project and name from train_args
+        # This ensures correct run name and real-time logging
         results = model.train(**train_args)
         end_time = datetime.now()
+
+        # CRITICAL: Move output from temporary directory to final location
+        # This ensures outputs are in the correct location as specified in config
+        # Only move if directories are different (when WandB project/name != output config)
+        if temp_output_dir != final_output_dir:
+            move_training_outputs(temp_output_dir, final_output_dir, logger)
+        else:
+            # Same directory, no move needed
+            logger.info(f"Output directory: {final_output_dir.absolute()}")
 
     except KeyboardInterrupt:
         logger.error("Training interrupted by user")
@@ -614,16 +702,14 @@ def train_detection_model(config_path: Path) -> Dict[str, Any]:
     finally:
         # CRITICAL: Always cleanup WandB session in finally block
         # This ensures proper cleanup even on errors or interruptions
-        # Note: active_run was finished before training to allow Ultralytics resume
-        # We need to check if Ultralytics finished the run or if we need to re-init
-        if wandb_run_id is not None:
+        if active_run is not None:
             try:
                 import wandb
 
                 # Check if run is still active (Ultralytics might have finished it)
                 run_still_active = (
                     wandb.run is not None
-                    and wandb.run.id == wandb_run_id
+                    and wandb.run.id == active_run.id
                     and not wandb.run.sweep_id  # Not a sweep run
                 )
 
@@ -633,109 +719,47 @@ def train_detection_model(config_path: Path) -> Dict[str, Any]:
                         "Re-initializing WandB run for final metrics logging..."
                     )
                     try:
-                        active_run = wandb.init(
-                            id=wandb_run_id,
-                            project=wandb_project,
-                            name=wandb_run_name,
+                        current_run = wandb.init(
+                            id=active_run.id,
+                            project=active_run.project,
+                            name=active_run.name,
                             resume="must",
                         )
                         run_still_active = True
                     except Exception as e:
                         logger.warning(f"Could not re-init WandB run: {e}")
                         run_still_active = False
+                        current_run = None
+                else:
+                    current_run = wandb.run
 
-                if run_still_active:
-                    # Get current run (either from re-init or existing)
-                    current_run = wandb.run if wandb.run is not None else None
-                    if current_run is None:
-                        logger.warning(
-                            "Could not get current WandB run, skipping metrics logging"
+                if run_still_active and current_run is not None:
+                    # Log final summary metrics if training completed
+                    if start_time is not None and end_time is not None:
+                        training_duration = (end_time - start_time).total_seconds()
+                        final_metrics_dict = extract_final_metrics(
+                            results, training_duration, logger
                         )
-                    else:
-                        # Log training metrics from CSV if training completed
-                        if start_time is not None and end_time is not None:
-                            # First, log all per-epoch metrics from CSV
-                            results_csv = output_dir / "results.csv"
-                            if results_csv.exists():
-                                logger.info(
-                                    "Logging training metrics from results.csv..."
-                                )
-                                log_training_metrics_from_csv(
-                                    results_csv, current_run, logger
-                                )
-                            else:
-                                logger.warning(
-                                    f"Results CSV not found at {results_csv}, "
-                                    "skipping per-epoch metrics logging"
-                                )
 
-                            # Then log final summary metrics
-                            training_duration = (end_time - start_time).total_seconds()
-                            final_metrics_dict = {
-                                "training_duration_hours": training_duration / 3600
-                            }
+                        # Note: Per-epoch metrics are already logged by Ultralytics WandB auto-logging
+                        # Only log from CSV as fallback if needed (currently disabled for simplicity)
 
-                            if (
-                                results is not None
-                                and hasattr(results, "box")
-                                and results.box is not None
-                            ):
-                                final_metrics_dict.update(
-                                    {
-                                        "val_map50_final": (
-                                            float(results.box.map50)
-                                            if results.box.map50 is not None
-                                            else 0.0
-                                        ),
-                                        "val_map50_95_final": (
-                                            float(results.box.map)
-                                            if results.box.map is not None
-                                            else 0.0
-                                        ),
-                                        "val_precision_final": (
-                                            float(results.box.mp)
-                                            if results.box.mp is not None
-                                            else 0.0
-                                        ),
-                                        "val_recall_final": (
-                                            float(results.box.mr)
-                                            if results.box.mr is not None
-                                            else 0.0
-                                        ),
-                                    }
-                                )
-                            else:
-                                logger.warning("Training results missing box metrics")
-                                final_metrics_dict.update(
-                                    {
-                                        "val_map50_final": 0.0,
-                                        "val_map50_95_final": 0.0,
-                                        "val_precision_final": 0.0,
-                                        "val_recall_final": 0.0,
-                                    }
-                                )
+                        # Log final summary metrics to WandB
+                        try:
+                            # Set as summary metrics (appear in run summary)
+                            for key, value in final_metrics_dict.items():
+                                current_run.summary[key] = value
+                            logger.info("Final summary metrics logged to WandB")
+                        except Exception as e:
+                            logger.warning(f"Could not log final metrics: {e}")
 
-                            # Log final summary metrics to WandB
-                            try:
-                                # Set as summary metrics (appear in run summary)
-                                for key, value in final_metrics_dict.items():
-                                    current_run.summary[key] = value
-                                logger.info("Final summary metrics logged to WandB")
-                            except Exception as e:
-                                logger.warning(f"Could not log final metrics: {e}")
-
-                    # Finish the run (only if we re-init'd it)
-                    if wandb.run is not None and wandb.run.id == wandb_run_id:
-                        exit_code = 0 if results is not None else 1
-                        wandb.run.finish(exit_code=exit_code)
-                        logger.info("WandB session finished successfully")
-                    else:
-                        logger.info(
-                            "WandB run already finished by Ultralytics, skipping finish"
-                        )
+                    # Finish the run
+                    exit_code = 0 if results is not None else 1
+                    current_run.finish(exit_code=exit_code)
+                    logger.info("WandB session finished successfully")
                 else:
                     logger.info(
-                        "WandB run already finished (likely by Ultralytics), skipping cleanup"
+                        "WandB run already finished or unavailable, skipping cleanup"
                     )
 
             except ImportError:
@@ -761,34 +785,7 @@ def train_detection_model(config_path: Path) -> Dict[str, Any]:
         pass
 
     # Extract metrics for return value
-    final_metrics_dict = {"training_duration_hours": training_duration / 3600}
-    if results is not None and hasattr(results, "box") and results.box is not None:
-        final_metrics_dict.update(
-            {
-                "val_map50_final": (
-                    float(results.box.map50) if results.box.map50 is not None else 0.0
-                ),
-                "val_map50_95_final": (
-                    float(results.box.map) if results.box.map is not None else 0.0
-                ),
-                "val_precision_final": (
-                    float(results.box.mp) if results.box.mp is not None else 0.0
-                ),
-                "val_recall_final": (
-                    float(results.box.mr) if results.box.mr is not None else 0.0
-                ),
-            }
-        )
-    else:
-        logger.warning("Training results missing box metrics")
-        final_metrics_dict.update(
-            {
-                "val_map50_final": 0.0,
-                "val_map50_95_final": 0.0,
-                "val_precision_final": 0.0,
-                "val_recall_final": 0.0,
-            }
-        )
+    final_metrics_dict = extract_final_metrics(results, training_duration, logger)
 
     try:
         final_metrics = TrainingMetricsSchema(**final_metrics_dict)
@@ -810,7 +807,7 @@ def train_detection_model(config_path: Path) -> Dict[str, Any]:
         logger.info(f"  Recall: {final_metrics.get('val_recall_final', 0.0):.4f}")
 
     # Save metrics to JSON
-    metrics_path = output_dir / "metrics.json"
+    metrics_path = final_output_dir / "metrics.json"
     metrics_dict = (
         final_metrics.model_dump(mode="json")
         if isinstance(final_metrics, TrainingMetricsSchema)
@@ -820,7 +817,7 @@ def train_detection_model(config_path: Path) -> Dict[str, Any]:
         json.dump(metrics_dict, f, indent=2)
     logger.info(f"Metrics saved to {metrics_path}")
 
-    model_path = output_dir / "weights" / "best.pt"
+    model_path = final_output_dir / "weights" / "best.pt"
     logger.info("=" * 60)
     logger.info("Training Complete!")
     logger.info(f"Model saved to: {model_path}")
