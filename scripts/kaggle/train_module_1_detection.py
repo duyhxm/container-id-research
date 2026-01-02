@@ -22,6 +22,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
+import yaml
+
 # Configuration
 CONFIG = {
     "repo_url": "https://github.com/duyhxm/container-id-research.git",
@@ -481,7 +483,7 @@ def configure_git(secrets: Dict) -> None:
 
 
 def configure_wandb(secrets: Dict) -> None:
-    """Configure WandB authentication."""
+    """Configure WandB authentication with validation."""
     logger.info("Configuring WandB...")
 
     wandb_key = secrets.get("WANDB_API_KEY")
@@ -489,8 +491,91 @@ def configure_wandb(secrets: Dict) -> None:
         logger.warning("WANDB_API_KEY not found, continuing without logging")
         return
 
-    run_cmd(f"wandb login {wandb_key}", check=False)
+    # Login to WandB
+    logger.info("Logging in to WandB...")
+    login_result = run_cmd(f"wandb login {wandb_key}", check=False, capture_output=True)
+    if login_result.returncode != 0:
+        logger.error(f"WandB login failed: {login_result.stderr}")
+        logger.error("Please check your WANDB_API_KEY in Kaggle Secrets")
+        sys.exit(1)
 
+    # Verify login by checking WandB status
+    logger.info("Verifying WandB authentication...")
+    status_result = run_cmd("wandb status", check=False, capture_output=True)
+    if status_result.returncode != 0:
+        logger.error("WandB authentication verification failed")
+        logger.error(f"Status output: {status_result.stderr}")
+        sys.exit(1)
+
+    logger.info("WandB login verified successfully")
+
+    # Validate entity and project from config
+    try:
+        from pathlib import Path
+
+        import wandb
+
+        config_file = Path(CONFIG["config_file"])
+        if not config_file.exists():
+            logger.warning(
+                f"Config file not found: {config_file}, skipping WandB validation"
+            )
+        else:
+            with open(config_file, "r") as f:
+                config = yaml.safe_load(f)
+
+            wandb_config = config.get("detection", {}).get("wandb", {})
+            entity = wandb_config.get("entity")
+            project = wandb_config.get("project")
+
+            if project:
+                if entity:
+                    logger.info(
+                        f"Validating WandB entity: {entity}, project: {project}"
+                    )
+                    # Try to access the project to verify permissions
+                    try:
+                        api = wandb.Api()
+                        # This will raise an exception if entity/project doesn't exist or no permission
+                        api.project(entity=entity, name=project)
+                        logger.info(
+                            f"✓ WandB project '{project}' under entity '{entity}' is accessible"
+                        )
+                    except Exception as e:
+                        logger.warning(f"WandB project validation failed: {e}")
+                        logger.warning(
+                            "This may cause permission errors during training"
+                        )
+                        logger.warning(
+                            "Consider creating the project manually or checking entity name"
+                        )
+                else:
+                    logger.info(
+                        f"WandB entity not specified, will use default entity from logged-in account"
+                    )
+                    logger.info(f"Validating WandB project: {project}")
+                    # Try to access project with default entity
+                    try:
+                        api = wandb.Api()
+                        # Get default entity from API
+                        default_entity = api.viewer().username
+                        api.project(entity=default_entity, name=project)
+                        logger.info(
+                            f"✓ WandB project '{project}' under default entity '{default_entity}' is accessible"
+                        )
+                    except Exception as e:
+                        logger.warning(f"WandB project validation failed: {e}")
+                        logger.warning(
+                            "Project will be created automatically if it doesn't exist"
+                        )
+            else:
+                logger.warning("WandB project not found in config, skipping validation")
+    except ImportError:
+        logger.warning("wandb module not available for validation")
+    except Exception as e:
+        logger.warning(f"WandB validation error (non-critical): {e}")
+
+    # Enable WandB in Ultralytics
     result = run_cmd("yolo settings wandb=True", check=False, capture_output=True)
     if result.returncode == 0:
         logger.info("WandB logging enabled in Ultralytics")

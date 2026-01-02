@@ -80,7 +80,7 @@ def initialize_wandb_for_ddp(
 
     Returns:
         Tuple of (run_id, run_name, project) for post-training re-init,
-        or (None, None, None) if WandB not available
+        or (None, None, None) if WandB not available or fails
     """
     try:
         import wandb
@@ -99,44 +99,91 @@ def initialize_wandb_for_ddp(
     else:
         wandb_config = config.get("wandb", {})
         if "project" not in wandb_config:
-            raise ValueError(
-                "wandb.project is required in config.yaml. "
-                "Please add it to your experiment configuration file."
+            logging.warning(
+                "wandb.project not found in config. Skipping WandB tracking."
             )
-
-        run = wandb.init(
-            project=wandb_config["project"],
-            entity=wandb_config.get("entity"),
-            name=experiment_name or wandb_config.get("name"),
-            config={
-                "model": config.get("model", {}),
-                "training": config.get("training", {}),
-                "augmentation": config.get("augmentation", {}),
-            },
-            tags=wandb_config.get("tags", []),
-            notes=wandb_config.get(
-                "notes", "YOLOv11 training for container door detection"
-            ),
-            save_code=True,
-        )
-
-        if run is None:
-            logging.warning("WandB run initialization failed")
             return None, None, None
 
-        run_id = run.id
-        run_name = run.name
-        project = run.project
-        logging.info(f"WandB run created: {run_name} ({run.url})")
-        run.finish()
-        logging.info("WandB run finished (Pass-the-Baton Phase 1 complete)")
+        try:
+            run = wandb.init(
+                project=wandb_config["project"],
+                entity=wandb_config.get("entity"),
+                name=experiment_name or wandb_config.get("name"),
+                config={
+                    "model": config.get("model", {}),
+                    "training": config.get("training", {}),
+                    "augmentation": config.get("augmentation", {}),
+                },
+                tags=wandb_config.get("tags", []),
+                notes=wandb_config.get(
+                    "notes", "YOLOv11 training for container door detection"
+                ),
+                save_code=True,
+            )
 
-    os.environ["WANDB_RUN_ID"] = run_id
-    os.environ["WANDB_PROJECT"] = project
-    os.environ["WANDB_NAME"] = run_name
-    logging.debug(
-        f"WandB env vars set: RUN_ID={run_id}, PROJECT={project}, NAME={run_name}"
-    )
+            if run is None:
+                logging.warning("WandB run initialization failed")
+                return None, None, None
+
+            run_id = run.id
+            run_name = run.name
+            project = run.project
+            logging.info(f"WandB run created: {run_name} ({run.url})")
+            run.finish()
+            logging.info("WandB run finished (Pass-the-Baton Phase 1 complete)")
+
+        except Exception as e:
+            error_msg = str(e)
+
+            # Analyze error type and provide specific guidance
+            if "403" in error_msg or "permission denied" in error_msg.lower():
+                logging.error("=" * 70)
+                logging.error("WandB PERMISSION ERROR (403)")
+                logging.error("=" * 70)
+                logging.error(f"Error: {error_msg}")
+                logging.error("")
+                logging.error("Possible causes:")
+                logging.error("  1. Invalid or expired WANDB_API_KEY")
+                logging.error("  2. Entity name incorrect or doesn't exist")
+                logging.error(
+                    f"     Current entity: {wandb_config.get('entity', 'None')}"
+                )
+                logging.error(
+                    "  3. Project doesn't exist or no permission to create runs"
+                )
+                logging.error(
+                    f"     Current project: {wandb_config.get('project', 'None')}"
+                )
+                logging.error("  4. Account doesn't have permission to create projects")
+                logging.error("")
+                logging.error("Solutions:")
+                logging.error("  - Verify WANDB_API_KEY in Kaggle Secrets")
+                logging.error("  - Check entity name matches your WandB username")
+                logging.error(
+                    "  - Create project manually on wandb.ai if it doesn't exist"
+                )
+                logging.error(
+                    "  - Use offline mode: set WANDB_MODE=offline in environment"
+                )
+                logging.error("=" * 70)
+            elif "401" in error_msg or "unauthorized" in error_msg.lower():
+                logging.error("WandB AUTHENTICATION ERROR (401)")
+                logging.error(f"Error: {error_msg}")
+                logging.error("Please verify your WANDB_API_KEY is correct")
+            else:
+                logging.warning(f"WandB initialization failed: {error_msg}")
+
+            logging.warning("Continuing training without WandB tracking")
+            return None, None, None
+
+    # Set environment variables only if run was created successfully
+    if run_id and project and run_name:
+        os.environ["WANDB_RUN_ID"] = run_id
+        os.environ["WANDB_PROJECT"] = project
+        os.environ["WANDB_NAME"] = run_name
+        logging.debug(
+            f"WandB env vars set: RUN_ID={run_id}, PROJECT={project}, NAME={run_name}"
+        )
 
     return run_id, run_name, project
 

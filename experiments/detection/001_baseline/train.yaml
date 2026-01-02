@@ -56,7 +56,7 @@ detection:
   # Experiment tracking
   wandb:
     project: container-door-detection
-    entity: duyhxm
+    entity: null  # Let WandB use default entity from logged-in account
     name: detection_exp001_yolo11s_baseline
     tags:
       - module1
