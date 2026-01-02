@@ -66,128 +66,125 @@ def load_full_config(config_path: Path) -> Dict[str, Any]:
     return params
 
 
-def initialize_wandb_for_ddp(
+def setup_wandb_session(
     config: Dict[str, Any], experiment_name: Optional[str]
-) -> Tuple[Optional[str], Optional[str], Optional[str]]:
-    """Initialize WandB for DDP training using Pass-the-Baton strategy.
+) -> Optional[Any]:
+    """Setup WandB session for DDP training using Hybrid Active-Session strategy.
 
-    Phase 1 (Pre-Train): Creates run, sets environment variables, then
-    immediately finishes to release lock for DDP workers.
+    Creates and maintains an active WandB run throughout training. Sets environment
+    variables immediately so DDP workers can resume the same run. The session remains
+    active until explicitly finished in the finally block.
 
     Args:
         config: Detection configuration dictionary
         experiment_name: Name for this experiment run (from config)
 
     Returns:
-        Tuple of (run_id, run_name, project) for post-training re-init,
-        or (None, None, None) if WandB not available or fails
+        WandB run object if successful, None otherwise
+
+    Note:
+        This function does NOT call run.finish(). The caller must ensure cleanup
+        in a finally block to prevent resource leaks.
     """
     try:
         import wandb
     except ImportError:
         logging.warning("WandB not installed. Skipping experiment tracking.")
-        return None, None, None
+        return None
 
+    # Check if run already exists (for resume/re-run scenarios in notebooks)
     if wandb.run is not None:
-        logging.warning(
-            f"WandB run already active: {wandb.run.name}. Finishing to prevent DDP lock."
+        active_run = wandb.run
+        logging.info(
+            f"WandB run already active: {active_run.name} ({active_run.url}). Reusing..."
         )
-        run_id = wandb.run.id
-        run_name = wandb.run.name
-        project = wandb.run.project
-        wandb.finish()
-    else:
-        wandb_config = config.get("wandb", {})
-        if "project" not in wandb_config:
-            logging.warning(
-                "wandb.project not found in config. Skipping WandB tracking."
+        # Update environment variables to ensure DDP workers use the same run
+        os.environ["WANDB_RUN_ID"] = active_run.id
+        os.environ["WANDB_PROJECT"] = active_run.project
+        os.environ["WANDB_NAME"] = active_run.name
+        os.environ["WANDB_RESUME"] = "allow"
+        logging.info("Environment variables updated for existing run")
+        return active_run
+
+    # Create new run
+    wandb_config = config.get("wandb", {})
+    if "project" not in wandb_config:
+        logging.warning("wandb.project not found in config. Skipping WandB tracking.")
+        return None
+
+    try:
+        run = wandb.init(
+            project=wandb_config["project"],
+            entity=wandb_config.get("entity"),
+            name=experiment_name or wandb_config.get("name"),
+            config={
+                "model": config.get("model", {}),
+                "training": config.get("training", {}),
+                "augmentation": config.get("augmentation", {}),
+            },
+            tags=wandb_config.get("tags", []),
+            notes=wandb_config.get(
+                "notes", "YOLOv11 training for container door detection"
+            ),
+            save_code=True,
+            resume="allow",  # Allow resume for DDP workers
+        )
+
+        if run is None:
+            logging.warning("WandB run initialization failed")
+            return None
+
+        # CRITICAL: Set environment variables immediately for DDP workers
+        # These are inherited by worker processes and allow them to resume the same run
+        os.environ["WANDB_RUN_ID"] = run.id
+        os.environ["WANDB_PROJECT"] = run.project
+        os.environ["WANDB_NAME"] = run.name
+        os.environ["WANDB_RESUME"] = "allow"  # Critical for DDP workers
+
+        logging.info(f"WandB run created: {run.name} ({run.url})")
+        logging.info("Environment variables set for DDP workers:")
+        logging.info(f"  WANDB_RUN_ID: {run.id}")
+        logging.info(f"  WANDB_PROJECT: {run.project}")
+        logging.info(f"  WANDB_NAME: {run.name}")
+        logging.info(f"  WANDB_RESUME: allow")
+
+        return run
+
+    except Exception as e:
+        error_msg = str(e)
+
+        # Analyze error type and provide specific guidance
+        if "403" in error_msg or "permission denied" in error_msg.lower():
+            logging.error("=" * 70)
+            logging.error("WandB PERMISSION ERROR (403)")
+            logging.error("=" * 70)
+            logging.error(f"Error: {error_msg}")
+            logging.error("")
+            logging.error("Possible causes:")
+            logging.error("  1. Invalid or expired WANDB_API_KEY")
+            logging.error("  2. Entity name incorrect or doesn't exist")
+            logging.error(f"     Current entity: {wandb_config.get('entity', 'None')}")
+            logging.error("  3. Project doesn't exist or no permission to create runs")
+            logging.error(
+                f"     Current project: {wandb_config.get('project', 'None')}"
             )
-            return None, None, None
+            logging.error("  4. Account doesn't have permission to create projects")
+            logging.error("")
+            logging.error("Solutions:")
+            logging.error("  - Verify WANDB_API_KEY in Kaggle Secrets")
+            logging.error("  - Check entity name matches your WandB username")
+            logging.error("  - Create project manually on wandb.ai if it doesn't exist")
+            logging.error("  - Use offline mode: set WANDB_MODE=offline in environment")
+            logging.error("=" * 70)
+        elif "401" in error_msg or "unauthorized" in error_msg.lower():
+            logging.error("WandB AUTHENTICATION ERROR (401)")
+            logging.error(f"Error: {error_msg}")
+            logging.error("Please verify your WANDB_API_KEY is correct")
+        else:
+            logging.warning(f"WandB initialization failed: {error_msg}")
 
-        try:
-            run = wandb.init(
-                project=wandb_config["project"],
-                entity=wandb_config.get("entity"),
-                name=experiment_name or wandb_config.get("name"),
-                config={
-                    "model": config.get("model", {}),
-                    "training": config.get("training", {}),
-                    "augmentation": config.get("augmentation", {}),
-                },
-                tags=wandb_config.get("tags", []),
-                notes=wandb_config.get(
-                    "notes", "YOLOv11 training for container door detection"
-                ),
-                save_code=True,
-            )
-
-            if run is None:
-                logging.warning("WandB run initialization failed")
-                return None, None, None
-
-            run_id = run.id
-            run_name = run.name
-            project = run.project
-            logging.info(f"WandB run created: {run_name} ({run.url})")
-            run.finish()
-            logging.info("WandB run finished (Pass-the-Baton Phase 1 complete)")
-
-        except Exception as e:
-            error_msg = str(e)
-
-            # Analyze error type and provide specific guidance
-            if "403" in error_msg or "permission denied" in error_msg.lower():
-                logging.error("=" * 70)
-                logging.error("WandB PERMISSION ERROR (403)")
-                logging.error("=" * 70)
-                logging.error(f"Error: {error_msg}")
-                logging.error("")
-                logging.error("Possible causes:")
-                logging.error("  1. Invalid or expired WANDB_API_KEY")
-                logging.error("  2. Entity name incorrect or doesn't exist")
-                logging.error(
-                    f"     Current entity: {wandb_config.get('entity', 'None')}"
-                )
-                logging.error(
-                    "  3. Project doesn't exist or no permission to create runs"
-                )
-                logging.error(
-                    f"     Current project: {wandb_config.get('project', 'None')}"
-                )
-                logging.error("  4. Account doesn't have permission to create projects")
-                logging.error("")
-                logging.error("Solutions:")
-                logging.error("  - Verify WANDB_API_KEY in Kaggle Secrets")
-                logging.error("  - Check entity name matches your WandB username")
-                logging.error(
-                    "  - Create project manually on wandb.ai if it doesn't exist"
-                )
-                logging.error(
-                    "  - Use offline mode: set WANDB_MODE=offline in environment"
-                )
-                logging.error("=" * 70)
-            elif "401" in error_msg or "unauthorized" in error_msg.lower():
-                logging.error("WandB AUTHENTICATION ERROR (401)")
-                logging.error(f"Error: {error_msg}")
-                logging.error("Please verify your WANDB_API_KEY is correct")
-            else:
-                logging.warning(f"WandB initialization failed: {error_msg}")
-
-            logging.warning("Continuing training without WandB tracking")
-            return None, None, None
-
-    # Set environment variables for Ultralytics to adopt
-    # CRITICAL: These env vars are read by Ultralytics to set WandB project/run name
-    if run_id and project and run_name:
-        os.environ["WANDB_RUN_ID"] = run_id
-        os.environ["WANDB_PROJECT"] = project
-        os.environ["WANDB_NAME"] = run_name  # Critical: Preserves run name on dashboard
-        logging.info(f"Environment variables set for DDP:")
-        logging.info(f"  WANDB_RUN_ID: {run_id}")
-        logging.info(f"  WANDB_PROJECT: {project}")
-        logging.info(f"  WANDB_NAME: {run_name}")
-
-    return run_id, run_name, project
+        logging.warning("Continuing training without WandB tracking")
+        return None
 
 
 def validate_experiment_name(name: Optional[str]) -> str:
@@ -325,7 +322,7 @@ def prepare_training_args(
     # Build output directory
     # CRITICAL: These "project" and "name" are for OUTPUT DIRECTORY only, NOT WandB!
     # WandB project/run name is configured via environment variables (WANDB_PROJECT, WANDB_NAME)
-    # set by initialize_wandb_for_ddp(). Ultralytics will read WandB settings from env vars.
+    # set by setup_wandb_session(). Ultralytics will read WandB settings from env vars.
     project_name = str(Path(output_cfg_validated.base_dir) / validated_exp_name)
     run_name = output_cfg_validated.train_dir
 
@@ -362,7 +359,7 @@ def prepare_training_args(
         "mixup": aug_cfg.mixup,
         "copy_paste": aug_cfg.copy_paste,
         # Output directory configuration (NOT WandB project/run name)
-        # WandB project/run name comes from environment variables set by initialize_wandb_for_ddp()
+        # WandB project/run name comes from environment variables set by setup_wandb_session()
         "project": project_name,
         "name": run_name,
         "exist_ok": True,
@@ -425,9 +422,9 @@ def train_detection_model(config_path: Path) -> Dict[str, Any]:
     logger.info(f"Model: {model_name}")
     logger.info(f"Dataset: {data_yaml_abs}")
 
-    # Initialize WandB (Pass-the-Baton Phase 1)
-    logger.info("Initializing experiment tracking (Pass-the-Baton Phase 1)...")
-    run_id, run_name, wandb_project = initialize_wandb_for_ddp(config, experiment_name)
+    # Setup WandB session (Hybrid Active-Session strategy)
+    logger.info("Setting up WandB session (Hybrid Active-Session)...")
+    active_run = setup_wandb_session(config, experiment_name)
 
     # CRITICAL: Import YOLO AFTER setting environment variables
     # This ensures Ultralytics reads WANDB_PROJECT and WANDB_NAME from environment
@@ -466,20 +463,6 @@ def train_detection_model(config_path: Path) -> Dict[str, Any]:
         config, data_yaml_abs, experiment_name, hardware_cfg, output_cfg
     )
 
-    # CRITICAL: Ensure no WandB session is active before training
-    # This forces Ultralytics to read from environment variables (WANDB_PROJECT, WANDB_NAME)
-    try:
-        import wandb
-
-        if wandb.run is not None:
-            logger.warning(
-                f"Active WandB run detected: {wandb.run.name}. Finishing it..."
-            )
-            wandb.finish()
-            logger.info("Previous WandB session finished")
-    except ImportError:
-        pass
-
     # Create output directory
     output_dir = Path(train_args["project"]) / train_args["name"]
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -488,31 +471,114 @@ def train_detection_model(config_path: Path) -> Dict[str, Any]:
         f"Training: {train_args['epochs']} epochs, batch={train_args['batch']}, lr={train_args['lr0']}"
     )
 
-    # Train
+    # Train with WandB session active
     logger.info("-" * 60)
+    logger.info("Starting training with active WandB session...")
 
-    def cleanup_wandb(exit_code: int = 0) -> None:
-        """Cleanup WandB session on error/interruption."""
-        try:
-            import wandb
-
-            if wandb.run is not None:
-                wandb.finish(exit_code=exit_code)
-        except Exception:
-            pass
+    start_time = None
+    end_time = None
+    results = None
 
     try:
         start_time = datetime.now()
+        # model.train() will use the active WandB session via environment variables
+        # DDP workers will resume the same run using WANDB_RUN_ID
         results = model.train(**train_args)
         end_time = datetime.now()
+
     except KeyboardInterrupt:
         logger.error("Training interrupted by user")
-        cleanup_wandb(exit_code=130)
         raise
     except (RuntimeError, Exception) as e:
         logger.error(f"Training failed: {e}", exc_info=True)
-        cleanup_wandb(exit_code=1)
         raise
+    finally:
+        # CRITICAL: Always cleanup WandB session in finally block
+        # This ensures proper cleanup even on errors or interruptions
+        if active_run is not None:
+            try:
+                import wandb
+
+                # Check if run is still active (might have been finished by Ultralytics)
+                run_still_active = (
+                    wandb.run is not None
+                    and wandb.run.id == active_run.id
+                    and not wandb.run.sweep_id  # Not a sweep run
+                )
+
+                if run_still_active:
+                    # Extract and log final metrics if training completed
+                    if start_time is not None and end_time is not None:
+                        training_duration = (end_time - start_time).total_seconds()
+                        final_metrics_dict = {
+                            "training_duration_hours": training_duration / 3600
+                        }
+
+                        if (
+                            results is not None
+                            and hasattr(results, "box")
+                            and results.box is not None
+                        ):
+                            final_metrics_dict.update(
+                                {
+                                    "val_map50_final": (
+                                        float(results.box.map50)
+                                        if results.box.map50 is not None
+                                        else 0.0
+                                    ),
+                                    "val_map50_95_final": (
+                                        float(results.box.map)
+                                        if results.box.map is not None
+                                        else 0.0
+                                    ),
+                                    "val_precision_final": (
+                                        float(results.box.mp)
+                                        if results.box.mp is not None
+                                        else 0.0
+                                    ),
+                                    "val_recall_final": (
+                                        float(results.box.mr)
+                                        if results.box.mr is not None
+                                        else 0.0
+                                    ),
+                                }
+                            )
+                        else:
+                            logger.warning("Training results missing box metrics")
+                            final_metrics_dict.update(
+                                {
+                                    "val_map50_final": 0.0,
+                                    "val_map50_95_final": 0.0,
+                                    "val_precision_final": 0.0,
+                                    "val_recall_final": 0.0,
+                                }
+                            )
+
+                        # Log final metrics to active run
+                        try:
+                            metrics_to_log = final_metrics_dict
+                            active_run.log(metrics_to_log)
+                            logger.info("Final metrics logged to WandB")
+                        except Exception as e:
+                            logger.warning(f"Could not log final metrics: {e}")
+
+                    # Finish the run
+                    exit_code = 0 if results is not None else 1
+                    active_run.finish(exit_code=exit_code)
+                    logger.info("WandB session finished successfully")
+                else:
+                    logger.info(
+                        "WandB run already finished (likely by Ultralytics), skipping cleanup"
+                    )
+
+            except ImportError:
+                logger.warning("WandB not available for cleanup")
+            except Exception as e:
+                logger.warning(f"Error during WandB cleanup: {e}")
+
+    # Extract metrics for return value (after finally block)
+    if start_time is None or end_time is None:
+        raise RuntimeError("Training did not complete successfully")
 
     training_duration = (end_time - start_time).total_seconds()
     logger.info("-" * 60)
@@ -527,7 +593,7 @@ def train_detection_model(config_path: Path) -> Dict[str, Any]:
     except ImportError:
         pass
 
-    # Extract metrics
+    # Extract metrics for return value
     final_metrics_dict = {"training_duration_hours": training_duration / 3600}
     if results is not None and hasattr(results, "box") and results.box is not None:
         final_metrics_dict.update(
@@ -562,29 +628,6 @@ def train_detection_model(config_path: Path) -> Dict[str, Any]:
     except Exception as e:
         logger.warning(f"Failed to validate metrics schema: {e}, using dict")
         final_metrics = final_metrics_dict
-
-    # Pass-the-Baton Phase 2: Re-init WandB to log final metrics
-    if run_id is not None:
-        try:
-            import wandb
-
-            logger.info("Re-initializing WandB for final metrics logging...")
-            run = wandb.init(
-                id=run_id, project=wandb_project, name=run_name, resume="must"
-            )
-            metrics_to_log = (
-                final_metrics.model_dump(mode="json")
-                if isinstance(final_metrics, TrainingMetricsSchema)
-                else final_metrics
-            )
-            run.log(metrics_to_log)
-            logger.info("Final metrics logged to WandB")
-            run.finish()
-            logger.info("WandB run finished (Pass-the-Baton Phase 2 complete)")
-        except (ImportError, AttributeError) as e:
-            logger.warning(f"Could not log final metrics to WandB: {e}")
-    else:
-        logger.info("WandB not configured, skipping final metrics logging")
 
     # Print final metrics
     logger.info("Final Validation Metrics:")
