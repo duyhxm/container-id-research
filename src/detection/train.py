@@ -68,28 +68,30 @@ def load_full_config(config_path: Path) -> Dict[str, Any]:
     return params
 
 
-def setup_wandb_environment(
-    config: Dict[str, Any], experiment_name: Optional[str]
+def setup_wandb_callback(
+    model: Any, config: Dict[str, Any], experiment_name: Optional[str]
 ) -> bool:
-    """Setup WandB environment for Ultralytics integration.
+    """Setup WandB callback for Ultralytics integration.
 
-    Instead of creating a WandB run manually, this function sets up environment
-    and verifies authentication. Ultralytics' WandB callback will create the run
-    automatically, ensuring proper integration with its logging system.
+    This function uses wandb.integration.ultralytics.add_wandb_callback to properly
+    integrate WandB with Ultralytics, ensuring correct project/run naming and metrics
+    logging. This is the OFFICIAL WandB integration method for Ultralytics.
 
     Args:
+        model: Ultralytics YOLO model instance
         config: Detection configuration dictionary
         experiment_name: Name for this experiment run (from config)
 
     Returns:
-        True if WandB is configured and ready, False otherwise
+        True if WandB callback is configured successfully, False otherwise
 
-    Note:
-        Ultralytics will create the run in its on_pretrain_routine_start callback.
-        This approach ensures proper metrics logging integration.
+    Reference:
+        - WandB Docs: https://docs.wandb.ai/models/integrations/ultralytics
+        - Ultralytics Callback Issue: https://github.com/ultralytics/ultralytics/issues/17506
     """
     try:
         import wandb
+        from wandb.integration.ultralytics import add_wandb_callback
     except ImportError:
         logging.warning("WandB not installed. Skipping experiment tracking.")
         return False
@@ -100,20 +102,37 @@ def setup_wandb_environment(
         return False
 
     try:
-        # Verify authentication without creating a run
+        # Verify authentication
         api = wandb.Api()
-        logging.info(
-            f"WandB authenticated as: {api.viewer().get('username', 'unknown')}"
-        )
+        username = api.viewer().get("username", "unknown")
+        logging.info(f"WandB authenticated as: {username}")
 
         # Log configuration details
+        project_name = wandb_config["project"]
+        run_name = experiment_name or wandb_config.get("name")
+        entity = wandb_config.get("entity")
+
         logging.info("WandB configuration:")
-        logging.info(f"  Project: {wandb_config['project']}")
-        logging.info(f"  Entity: {wandb_config.get('entity', 'default')}")
-        logging.info(f"  Run name: {experiment_name or wandb_config.get('name')}")
-        logging.info("")
-        logging.info("WandB will be initialized by Ultralytics callback system")
-        logging.info("This ensures proper metrics logging integration")
+        logging.info(f"  Project: {project_name}")
+        logging.info(f"  Entity: {entity or 'default'}")
+        logging.info(f"  Run name: {run_name}")
+
+        # Initialize WandB run with correct project and name
+        # This creates the run BEFORE training starts, ensuring correct naming
+        run = wandb.init(
+            project=project_name,
+            name=run_name,
+            entity=entity,
+            config=config,  # Log full config
+            job_type="train",
+        )
+
+        # Add WandB callback to model
+        # This callback will log metrics to the run we just created
+        add_wandb_callback(model, enable_model_checkpointing=False)
+
+        logging.info("WandB callback configured successfully")
+        logging.info(f"View run at: {run.get_url()}")
 
         return True
 
@@ -489,38 +508,13 @@ def train_detection_model(config_path: Path) -> Dict[str, Any]:
     logger.info(f"Model: {model_name}")
     logger.info(f"Dataset: {data_yaml_abs}")
 
-    # Setup WandB environment for Ultralytics integration
-    logger.info("Setting up WandB environment...")
-    wandb_enabled = setup_wandb_environment(config, experiment_name)
-
-    # Import YOLO
-    logger.debug("Importing Ultralytics YOLO (after env vars set)...")
+    # Import YOLO first
+    logger.debug("Importing Ultralytics YOLO...")
     try:
-        from ultralytics import YOLO, settings
+        from ultralytics import YOLO
     except ImportError:
         logger.error("Ultralytics not installed. Install with: pip install ultralytics")
         raise
-
-    # Configure Ultralytics WandB settings
-    logger.info("Configuring Ultralytics WandB settings...")
-    try:
-        from ultralytics.utils import SETTINGS
-
-        settings = SETTINGS.copy()
-        if wandb_enabled:
-            # Enable WandB in Ultralytics
-            # Ultralytics callbacks will handle run creation and logging
-            settings.update({"wandb": True})
-            logger.info("WandB integration ENABLED in Ultralytics")
-            logger.info(
-                "Ultralytics callbacks will create run and log metrics automatically"
-            )
-        else:
-            # Disable WandB in Ultralytics
-            settings.update({"wandb": False})
-            logger.info("WandB integration DISABLED in Ultralytics (not configured)")
-    except Exception as e:
-        logger.warning(f"Could not configure Ultralytics settings: {e}")
 
     # Initialize model
     resume_from = config["model"].get("resume_from")
@@ -534,22 +528,14 @@ def train_detection_model(config_path: Path) -> Dict[str, Any]:
         logger.info(f"Loading pretrained model: {model_name}.pt")
         model = YOLO(f"{model_name}.pt")
 
+    # Setup WandB callback AFTER model initialization
+    logger.info("Setting up WandB callback...")
+    wandb_enabled = setup_wandb_callback(model, config, experiment_name)
+
     # Prepare training arguments
     train_args = prepare_training_args(
         config, data_yaml_abs, experiment_name, hardware_cfg, output_cfg
     )
-
-    # Configure WandB project and name in train_args for Ultralytics callback
-    # Ultralytics' on_pretrain_routine_start callback will use these to create the run
-    if wandb_enabled:
-        wandb_config = config.get("wandb", {})
-        # Override project and name in train_args to match WandB config
-        # This ensures Ultralytics creates the run with correct settings
-        train_args["project"] = wandb_config["project"]
-        train_args["name"] = experiment_name or wandb_config.get("name")
-        logger.info(f"WandB project: {wandb_config['project']}")
-        logger.info(f"WandB run name: {experiment_name or wandb_config.get('name')}")
-        logger.info("Ultralytics callback will create WandB run with these settings")
 
     # Calculate final output directory (where we want results to end up)
     # Note: validated_exp_name already computed in prepare_training_args, but we need it here
@@ -589,7 +575,7 @@ def train_detection_model(config_path: Path) -> Dict[str, Any]:
     logger.info("-" * 60)
     logger.info("Starting training...")
     if wandb_enabled:
-        logger.info("Ultralytics callback will create WandB run on training start")
+        logger.info("WandB callback will log metrics during training")
 
     start_time = None
     end_time = None
@@ -597,8 +583,7 @@ def train_detection_model(config_path: Path) -> Dict[str, Any]:
 
     try:
         start_time = datetime.now()
-        # model.train() will use WandB project and name from train_args
-        # DDP workers will resume the finished run using WANDB_RUN_ID env var
+        # model.train() will log to WandB via the callback we added
         results = model.train(**train_args)
         end_time = datetime.now()
 
@@ -633,9 +618,16 @@ def train_detection_model(config_path: Path) -> Dict[str, Any]:
         else:
             logger.info(f"Training outputs saved to: {final_output_dir.absolute()}")
 
-        # WandB run is automatically finished by Ultralytics' on_train_end callback
+        # Finish WandB run
         if wandb_enabled:
-            logger.info("WandB run will be finished by Ultralytics callback")
+            try:
+                import wandb
+
+                if wandb.run:
+                    wandb.finish()
+                    logger.info("WandB run finished")
+            except Exception as e:
+                logger.warning(f"Error finishing WandB run: {e}")
 
     # Extract metrics for return value (after finally block)
     if start_time is None or end_time is None:
