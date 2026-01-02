@@ -29,7 +29,7 @@ from src.detection.schemas import (
     EvaluationResultsSchema,
     TrainingResultsSchema,
 )
-from src.detection.train import train_detection_model, load_training_config
+from src.detection.train import train_detection_model, load_full_config
 from src.detection.evaluate import evaluate_model, load_evaluation_config
 
 __all__ = [
@@ -39,7 +39,7 @@ __all__ = [
     "get_default_config",
     "load_config",
     "train_detection_model",
-    "load_training_config",
+    "load_full_config",
     "evaluate_model",
     "load_evaluation_config",
     # Schemas

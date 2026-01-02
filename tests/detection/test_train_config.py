@@ -1,7 +1,7 @@
 """
 Unit tests for detection training configuration loading.
 
-Tests the new experiment directory structure:
+Tests loading from YAML file:
 - experiments/detection/{exp_id}/train.yaml
 - experiments/detection/{exp_id}/eval.yaml
 """
@@ -12,15 +12,15 @@ from pathlib import Path
 import pytest
 import yaml
 
-from src.detection.train import load_training_config
+from src.detection.train import load_full_config
 from src.detection.evaluate import load_evaluation_config
 
 
-class TestLoadTrainingConfig:
-    """Tests for load_training_config function with new directory structure."""
+class TestLoadFullConfig:
+    """Tests for load_full_config function with YAML file path."""
 
-    def test_load_from_directory_with_train_yaml(self, tmp_path):
-        """Test loading training config from directory structure."""
+    def test_load_from_yaml_file(self, tmp_path):
+        """Test loading full config from YAML file."""
         # Create experiment directory structure
         exp_dir = tmp_path / "detection" / "001_baseline"
         exp_dir.mkdir(parents=True)
@@ -61,37 +61,50 @@ class TestLoadTrainingConfig:
         with open(train_file, "w", encoding="utf-8") as f:
             yaml.dump(train_config, f)
 
-        # Load config
-        config = load_training_config(exp_dir)
+        # Load full config from file
+        config = load_full_config(train_file)
 
-        # Verify structure
-        assert "model" in config
-        assert "training" in config
-        assert "augmentation" in config
-        assert "wandb" in config
+        # Verify full structure (all sections)
+        assert "detection" in config
+        assert "hardware" in config
+
+        # Verify detection section
+        detection = config["detection"]
+        assert "model" in detection
+        assert "training" in detection
+        assert "augmentation" in detection
+        assert "wandb" in detection
 
         # Verify values
-        assert config["model"]["architecture"] == "yolo11s"
-        assert config["training"]["epochs"] == 150
-        assert config["training"]["batch_size"] == 32
-        assert config["wandb"]["project"] == "container-id-research"
+        assert detection["model"]["architecture"] == "yolo11s"
+        assert detection["training"]["epochs"] == 150
+        assert detection["training"]["batch_size"] == 32
+        assert detection["wandb"]["project"] == "container-id-research"
 
-    def test_directory_without_train_yaml_raises_error(self, tmp_path):
-        """Test that directory without train.yaml raises FileNotFoundError."""
-        exp_dir = tmp_path / "detection" / "001_baseline"
-        exp_dir.mkdir(parents=True)
-        # Don't create train.yaml
+        # Verify hardware section
+        assert config["hardware"]["multi_gpu"] is True
+        assert config["hardware"]["num_workers"] == 8
+
+    def test_nonexistent_file_raises_error(self):
+        """Test that nonexistent file raises FileNotFoundError."""
+        nonexistent = Path("nonexistent/train.yaml")
 
         with pytest.raises(FileNotFoundError) as exc_info:
-            load_training_config(exp_dir)
-        assert "train.yaml not found" in str(exc_info.value)
+            load_full_config(nonexistent)
+        assert "Configuration file not found" in str(exc_info.value)
+
+    def test_directory_path_raises_error(self, tmp_path):
+        """Test that directory path raises FileNotFoundError."""
+        exp_dir = tmp_path / "detection" / "001_baseline"
+        exp_dir.mkdir(parents=True)
+
+        with pytest.raises(FileNotFoundError) as exc_info:
+            load_full_config(exp_dir)
+        assert "Expected YAML file, got directory" in str(exc_info.value)
 
     def test_missing_detection_section_raises_error(self, tmp_path):
         """Test that config without detection section raises ValueError."""
-        exp_dir = tmp_path / "detection" / "001_baseline"
-        exp_dir.mkdir(parents=True)
-
-        train_file = exp_dir / "train.yaml"
+        train_file = tmp_path / "train.yaml"
         invalid_config = {
             "training": {"epochs": 100}  # Missing "detection" wrapper
         }
@@ -100,22 +113,11 @@ class TestLoadTrainingConfig:
             yaml.dump(invalid_config, f)
 
         with pytest.raises(ValueError) as exc_info:
-            load_training_config(exp_dir)
+            load_full_config(train_file)
         assert "detection" in str(exc_info.value).lower()
 
-    def test_nonexistent_path_raises_error(self):
-        """Test that nonexistent path raises FileNotFoundError."""
-        nonexistent = Path("nonexistent/experiment/directory")
-
-        with pytest.raises(FileNotFoundError) as exc_info:
-            load_training_config(nonexistent)
-        assert "experiment directory" in str(exc_info.value).lower()
-
-    def test_load_hardware_config_from_directory(self, tmp_path):
-        """Test that hardware config is accessible from directory structure."""
-        exp_dir = tmp_path / "detection" / "001_baseline"
-        exp_dir.mkdir(parents=True)
-
+    def test_load_hardware_config_from_file(self, tmp_path):
+        """Test that hardware config is accessible from YAML file."""
         train_config = {
             "detection": {
                 "model": {"architecture": "yolo11s"},
@@ -128,17 +130,15 @@ class TestLoadTrainingConfig:
             },
         }
 
-        train_file = exp_dir / "train.yaml"
+        train_file = tmp_path / "train.yaml"
         with open(train_file, "w", encoding="utf-8") as f:
             yaml.dump(train_config, f)
 
-        # Load and verify hardware config is in the file (for prepare_training_args)
-        with open(train_file, "r", encoding="utf-8") as f:
-            full_params = yaml.safe_load(f)
-
-        assert "hardware" in full_params
-        assert full_params["hardware"]["multi_gpu"] is True
-        assert full_params["hardware"]["num_workers"] == 8
+        # Load full config and verify hardware section
+        config = load_full_config(train_file)
+        assert "hardware" in config
+        assert config["hardware"]["multi_gpu"] is True
+        assert config["hardware"]["num_workers"] == 8
 
 
 class TestLoadEvaluationConfig:
@@ -228,18 +228,22 @@ class TestConfigIntegration:
     """Integration tests for config loading with real experiment structure."""
 
     def test_load_real_experiment_config(self):
-        """Test loading from actual experiments/detection/001_baseline structure."""
-        real_exp_dir = Path("experiments/detection/001_baseline")
+        """Test loading from actual experiments/detection/001_baseline/train.yaml."""
+        train_file = Path("experiments/detection/001_baseline/train.yaml")
 
-        if not real_exp_dir.exists():
-            pytest.skip("Real experiment directory not found")
+        if not train_file.exists():
+            pytest.skip("Real experiment train.yaml not found")
 
-        # Test training config
-        train_config = load_training_config(real_exp_dir)
-        assert "model" in train_config
-        assert "training" in train_config
-        assert "wandb" in train_config
-        assert train_config["wandb"]["project"] == "container-id-research"
+        # Test full config
+        config = load_full_config(train_file)
+        assert "detection" in config
+        assert "hardware" in config
+        
+        detection = config["detection"]
+        assert "model" in detection
+        assert "training" in detection
+        assert "wandb" in detection
+        assert detection["wandb"]["project"] == "container-door-detection"
 
         # Test evaluation config
         eval_config = load_evaluation_config(real_exp_dir)
@@ -249,9 +253,6 @@ class TestConfigIntegration:
 
     def test_wandb_project_required(self, tmp_path):
         """Test that wandb.project is required (no default value)."""
-        exp_dir = tmp_path / "detection" / "001_baseline"
-        exp_dir.mkdir(parents=True)
-
         # Create train.yaml without wandb.project
         train_config = {
             "detection": {
@@ -264,12 +265,13 @@ class TestConfigIntegration:
             }
         }
 
-        train_file = exp_dir / "train.yaml"
+        train_file = tmp_path / "train.yaml"
         with open(train_file, "w", encoding="utf-8") as f:
             yaml.dump(train_config, f)
 
-        # Load config (should succeed)
-        config = load_training_config(exp_dir)
+        # Load full config (should succeed)
+        full_config = load_full_config(train_file)
+        config = full_config["detection"]
 
         # But initialize_wandb_for_ddp should raise error if project missing
         from src.detection.train import initialize_wandb_for_ddp
@@ -280,27 +282,21 @@ class TestConfigIntegration:
 
     def test_invalid_yaml_raises_error(self, tmp_path):
         """Test that invalid YAML raises appropriate error."""
-        exp_dir = tmp_path / "detection" / "001_baseline"
-        exp_dir.mkdir(parents=True)
-
-        train_file = exp_dir / "train.yaml"
+        train_file = tmp_path / "train.yaml"
         # Write invalid YAML
         train_file.write_text("invalid: yaml: content: [unclosed")
 
         with pytest.raises(yaml.YAMLError):
-            load_training_config(exp_dir)
+            load_full_config(train_file)
 
     def test_empty_yaml_file(self, tmp_path):
         """Test handling of empty YAML file."""
-        exp_dir = tmp_path / "detection" / "001_baseline"
-        exp_dir.mkdir(parents=True)
-
-        train_file = exp_dir / "train.yaml"
+        train_file = tmp_path / "train.yaml"
         train_file.write_text("")  # Empty file
 
         # Empty YAML file returns None, should raise ValueError
         with pytest.raises(ValueError) as exc_info:
-            load_training_config(exp_dir)
+            load_full_config(train_file)
         assert "empty or invalid" in str(exc_info.value).lower()
 
     def test_directory_without_eval_yaml_raises_error(self, tmp_path):

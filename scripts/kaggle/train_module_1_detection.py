@@ -33,6 +33,58 @@ CONFIG = {
     "config_file": "experiments/detection/001_baseline/train.yaml",
 }
 
+# Module 1 (Detection) Required Dependencies
+# Core ML libraries that must be compatible
+REQUIRED_DEPENDENCIES = {
+    "torch": None,  # Use Kaggle's version, check compatibility
+    "torchvision": None,  # Must be compatible with torch
+    "ultralytics": ">=8.3.237",  # For YOLO models
+}
+
+# PyTorch compatibility matrix (torch -> torchvision)
+# Reference: https://github.com/pytorch/vision#installation
+TORCH_COMPATIBILITY = {
+    "2.6": "0.21",
+    "2.5": "0.20",
+    "2.4": "0.19",
+    "2.3": "0.18",
+    "2.2": "0.17",
+    "2.1": "0.16",
+    "2.0": "0.15",
+}
+
+# Additional dependencies from pyproject.toml (non-hardware stack)
+ADDITIONAL_DEPS = [
+    "albumentations>=2.0.8",
+    "dvc[gdrive]>=3.64.2",
+    "gradio>=6.1.0",
+    "ipykernel>=7.1.0",
+    "ipywidgets>=8.1.8",
+    "kaggle>=1.8.2",
+    "matplotlib>=3.10.8",
+    "opencv-contrib-python>=4.12.0.88",
+    "pandas>=2.3.3",
+    "pydantic>=2.0.0",
+    "pyopenssl>=24.2.1",
+    "pytesseract>=0.3.13",
+    "pytest>=9.0.2",
+    "pyyaml>=6.0.3",
+    "rapidocr-onnxruntime>=1.4.4",
+    "scikit-learn>=1.8.0",
+    "seaborn>=0.13.2",
+    "shapely>=2.1.2",
+    "streamlit>=1.52.2",
+    "transformers==4.46.3",
+    "tokenizers==0.20.3",
+    "einops>=0.8.0",
+    "addict>=2.4.0",
+    "easydict>=1.13",
+    "tqdm>=4.67.1",
+    "wandb>=0.23.1",
+    "bitsandbytes>=0.49.0",
+    "python-levenshtein>=0.27.3",
+]
+
 # Setup logging
 logging.basicConfig(
     level=logging.INFO,
@@ -60,18 +112,23 @@ def run_cmd(
 
 
 def verify_gpu() -> None:
-    """Verify GPU availability."""
-    logger.info("Verifying GPU...")
+    """Verify GPU availability (called before environment validation)."""
+    logger.info("Verifying GPU availability...")
     try:
         import torch
 
         if not torch.cuda.is_available():
             logger.error("GPU not available! Enable in Settings → Accelerator")
             sys.exit(1)
+        gpu_count = torch.cuda.device_count()
         logger.info(f"GPU: {torch.cuda.get_device_name(0)}")
+        if gpu_count > 1:
+            logger.info(f"Multiple GPUs detected: {gpu_count}")
     except ImportError:
-        logger.error("PyTorch not installed")
-        sys.exit(1)
+        logger.error(
+            "PyTorch not installed - will be checked in environment validation"
+        )
+        # Don't exit here, let validate_environment() handle it
 
 
 def clone_repository() -> None:
@@ -89,24 +146,156 @@ def clone_repository() -> None:
     logger.info(f"Cloned to {repo_path}")
 
 
-def install_dependencies() -> None:
-    """Install dependencies using hybrid strategy (Kaggle PyTorch + uv.lock deps)."""
-    logger.info("Installing dependencies...")
+def check_kaggle_environment() -> Dict[str, str]:
+    """Check Kaggle environment and return installed package versions.
 
-    # Install uv
+    Returns:
+        Dictionary with package names and versions (e.g., {'torch': '2.6.0', ...})
+
+    Raises:
+        SystemExit: If critical packages are missing
+    """
+    logger.info("Checking Kaggle environment...")
+    env_info = {}
+
+    # Check PyTorch
+    try:
+        import torch
+
+        env_info["torch"] = torch.__version__
+        env_info["cuda_available"] = str(torch.cuda.is_available())
+        if torch.cuda.is_available():
+            env_info["cuda_version"] = torch.version.cuda
+            env_info["gpu_count"] = str(torch.cuda.device_count())
+            env_info["gpu_name"] = torch.cuda.get_device_name(0)
+        logger.info(f"PyTorch: {env_info['torch']}, CUDA: {env_info['cuda_available']}")
+    except ImportError:
+        logger.error("PyTorch not found in Kaggle environment")
+        sys.exit(1)
+
+    # Check torchvision
+    try:
+        import torchvision
+
+        env_info["torchvision"] = torchvision.__version__
+        logger.info(f"TorchVision: {env_info['torchvision']}")
+    except ImportError:
+        logger.warning("TorchVision not found")
+        env_info["torchvision"] = None
+
+    # Check ultralytics
+    try:
+        import ultralytics
+
+        env_info["ultralytics"] = ultralytics.__version__
+        logger.info(f"Ultralytics: {env_info['ultralytics']}")
+    except ImportError:
+        logger.warning("Ultralytics not found")
+        env_info["ultralytics"] = None
+
+    return env_info
+
+
+def fix_torch_compatibility(env_info: Dict[str, str]) -> None:
+    """Fix torch/torchvision compatibility issues.
+
+    Args:
+        env_info: Environment information from check_kaggle_environment()
+    """
+    torch_version = env_info.get("torch")
+    if not torch_version:
+        logger.error("Cannot fix compatibility: torch version unknown")
+        sys.exit(1)
+
+    # Extract major.minor version (e.g., "2.6" from "2.6.0")
+    torch_major_minor = ".".join(torch_version.split(".")[:2])
+
+    # Find compatible torchvision version
+    compatible_torchvision = None
+    for torch_ver, tv_ver in TORCH_COMPATIBILITY.items():
+        if torch_major_minor.startswith(torch_ver):
+            compatible_torchvision = tv_ver
+            break
+
+    if not compatible_torchvision:
+        logger.warning(
+            f"Unknown torch version {torch_major_minor}, cannot determine compatible torchvision"
+        )
+        return
+
+    current_torchvision = env_info.get("torchvision")
+    if current_torchvision and current_torchvision.startswith(compatible_torchvision):
+        logger.info(
+            f"TorchVision {current_torchvision} is compatible with torch {torch_version}"
+        )
+        return
+
+    # Need to fix compatibility
+    logger.info(
+        f"Fixing compatibility: torch {torch_version} requires torchvision {compatible_torchvision}.x"
+    )
+    logger.info("Uninstalling existing torchvision...")
+    run_cmd("pip uninstall -y torchvision", check=False)
+
+    logger.info(f"Installing torchvision=={compatible_torchvision}.0...")
+    run_cmd(
+        f"pip install --no-deps torchvision=={compatible_torchvision}.0", check=False
+    )
+
+
+def ensure_ultralytics() -> None:
+    """Ensure ultralytics is installed and importable."""
+    logger.info("Ensuring ultralytics is installed...")
+
+    # Try to import first
+    try:
+        from ultralytics import YOLO
+
+        logger.info("Ultralytics already available")
+        return
+    except ImportError:
+        logger.info("Ultralytics not found, installing...")
+
+    # Install ultralytics
+    run_cmd("pip install --upgrade ultralytics", check=False)
+
+    # Verify installation
+    try:
+        from ultralytics import YOLO
+
+        logger.info("Ultralytics installed successfully")
+    except ImportError:
+        logger.error("Failed to install ultralytics, attempting force reinstall...")
+        run_cmd("pip install --force-reinstall --no-cache-dir ultralytics", check=False)
+
+        try:
+            from ultralytics import YOLO
+
+            logger.info("Ultralytics reinstalled successfully")
+        except ImportError as e:
+            logger.error(f"Failed to install ultralytics: {e}")
+            sys.exit(1)
+
+
+def install_additional_dependencies() -> None:
+    """Install additional dependencies from pyproject.toml (excluding hardware stack)."""
+    logger.info("Installing additional dependencies...")
+
+    # Install uv for dependency management
     run_cmd("pip install -q uv")
 
     if not Path("uv.lock").exists():
         logger.error("uv.lock not found in repository")
         sys.exit(1)
 
-    # Export and filter requirements (exclude PyTorch/CUDA)
+    # Export requirements from uv.lock
     export_cmd = "python -m uv export --frozen --format=requirements-txt --no-hashes --no-emit-project"
     result = run_cmd(export_cmd, check=False, capture_output=True)
     if result.returncode != 0:
         logger.error(f"Failed to export from uv.lock: {result.stderr}")
         sys.exit(1)
 
+    # Filter out hardware stack (torch, torchvision, torchaudio, nvidia, cuda)
     exclude_keywords = ["torch", "torchvision", "torchaudio", "nvidia-", "cuda-"]
     filtered_lines = [
         line.strip()
@@ -119,7 +308,7 @@ def install_dependencies() -> None:
     # Save filtered requirements
     temp_req_file = Path("/tmp/filtered_requirements.txt")
     temp_req_file.write_text("\n".join(filtered_lines))
-    logger.info(f"Filtered {len(filtered_lines)} packages (excluded PyTorch/CUDA)")
+    logger.info(f"Filtered {len(filtered_lines)} packages (excluded hardware stack)")
 
     # Install filtered requirements
     run_cmd(f"python -m uv pip install --system -r {temp_req_file}")
@@ -127,22 +316,72 @@ def install_dependencies() -> None:
     # Install project in editable mode without dependencies
     run_cmd("python -m uv pip install --system --no-deps -e .")
 
-    # Verify installation
+
+def validate_environment() -> None:
+    """Validate complete environment before training.
+
+    This function ensures:
+    1. All required dependencies are installed
+    2. torch/torchvision are compatible
+    3. ultralytics can import YOLO
+    4. CUDA is available
+    5. No critical dependency conflicts
+
+    Raises:
+        SystemExit: If validation fails
+    """
+    logger.info("=" * 70)
+    logger.info("ENVIRONMENT VALIDATION")
+    logger.info("=" * 70)
+
+    # Step 1: Check Kaggle environment
+    env_info = check_kaggle_environment()
+
+    # Step 2: Fix torch/torchvision compatibility
+    fix_torch_compatibility(env_info)
+
+    # Step 3: Ensure ultralytics
+    ensure_ultralytics()
+
+    # Step 4: Install additional dependencies
+    install_additional_dependencies()
+
+    # Step 5: Final validation
+    logger.info("Performing final validation...")
+
+    # Check for dependency conflicts
     result = run_cmd("python -m uv pip check", check=False, capture_output=True)
     if result.returncode != 0:
         logger.warning(f"Dependency conflicts detected:\n{result.stdout}")
 
-    # Verify PyTorch/CUDA
-    verify_cmd = (
-        'python -c "import torch; '
-        f"print(f'PyTorch: {{torch.__version__}}'); "
-        f"print(f'CUDA Available: {{torch.cuda.is_available()}}'); "
-        f'print(f\'CUDA Version: {{torch.version.cuda if torch.cuda.is_available() else "N/A"}}\')"'
-    )
-    result = run_cmd(verify_cmd, check=False, capture_output=True)
-    if result.returncode == 0:
-        for line in result.stdout.strip().splitlines():
-            logger.info(line)
+    # Verify critical imports
+    validation_checks = [
+        ("torch", "import torch; print(f'PyTorch: {torch.__version__}')"),
+        (
+            "torchvision",
+            "import torchvision; print(f'TorchVision: {torchvision.__version__}')",
+        ),
+        ("ultralytics", "from ultralytics import YOLO; print('Ultralytics: OK')"),
+        ("CUDA", "import torch; print(f'CUDA Available: {torch.cuda.is_available()}')"),
+    ]
+
+    all_passed = True
+    for name, check_cmd in validation_checks:
+        result = run_cmd(f'python -c "{check_cmd}"', check=False, capture_output=True)
+        if result.returncode == 0:
+            logger.info(f"✓ {name}: {result.stdout.strip()}")
+        else:
+            logger.error(f"✗ {name}: Validation failed")
+            logger.error(result.stderr if result.stderr else "Unknown error")
+            all_passed = False
+
+    if not all_passed:
+        logger.error("Environment validation failed. Cannot proceed with training.")
+        sys.exit(1)
+
+    logger.info("=" * 70)
+    logger.info("✓ ENVIRONMENT VALIDATION PASSED")
+    logger.info("=" * 70)
 
 
 def load_secrets() -> Dict:
@@ -503,7 +742,7 @@ def main() -> None:
         secrets = load_secrets()
         verify_gpu()
         clone_repository()
-        install_dependencies()
+        validate_environment()  # Comprehensive environment check and setup
         configure_dvc(secrets)
         configure_git(secrets)
         configure_wandb(secrets)
