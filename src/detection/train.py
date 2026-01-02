@@ -12,60 +12,63 @@ import argparse
 import json
 import logging
 import os
+import re
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import yaml
 
+from src.detection.schemas import (
+    DetectionTrainingConfigSchema,
+    TrainingMetricsSchema,
+    TrainingResultsSchema,
+)
 from src.utils.logging_config import setup_logging
 
 
-def load_training_config(config_path: Path) -> Dict[str, Any]:
-    """
-    Load training configuration from YAML file.
-
-    Supports both old and new experiment structure:
-    - Old: experiments/001_det_baseline.yaml (direct file)
-    - New: experiments/detection/001_baseline/ (directory, reads train.yaml)
+def load_full_config(config_path: Path) -> Dict[str, Any]:
+    """Load full configuration from YAML file.
 
     Args:
-        config_path: Path to configuration file or experiment directory
+        config_path: Path to YAML configuration file (e.g., experiments/detection/001_baseline/train.yaml)
 
     Returns:
-        Dictionary containing detection training configuration
+        Complete configuration dictionary with all sections
 
     Raises:
         FileNotFoundError: If config file doesn't exist
-        ValueError: If detection section missing
+        ValueError: If file is invalid or missing detection section
     """
-    # Handle new structure: if path is a directory, look for train.yaml
-    if config_path.is_dir():
-        train_file = config_path / "train.yaml"
-        if train_file.exists():
-            config_path = train_file
-        else:
-            raise FileNotFoundError(
-                f"train.yaml not found in experiment directory: {config_path}"
-            )
-    # Handle old structure: direct file path
-    elif not config_path.exists():
-        raise FileNotFoundError(f"Configuration file not found: {config_path}")
+    if not config_path.exists():
+        raise FileNotFoundError(
+            f"Configuration file not found: {config_path}\n"
+            "Please provide path to YAML file: experiments/detection/{experiment_id}/train.yaml"
+        )
+
+    if not config_path.is_file():
+        raise FileNotFoundError(
+            f"Expected YAML file, got directory: {config_path}\n"
+            "Please provide path to YAML file: experiments/detection/{experiment_id}/train.yaml"
+        )
 
     with open(config_path, "r", encoding="utf-8") as f:
         params = yaml.safe_load(f)
 
     if params is None:
         raise ValueError("Configuration file is empty or invalid")
-    if "detection" not in params:
-        raise ValueError("Configuration must contain 'detection' section")
 
-    return params["detection"]
+    if "detection" not in params:
+        raise ValueError(
+            f"Configuration must contain 'detection' section in {config_path}"
+        )
+
+    return params
 
 
 def initialize_wandb_for_ddp(
     config: Dict[str, Any], experiment_name: Optional[str]
-) -> tuple[Optional[str], Optional[str], Optional[str]]:
+) -> Tuple[Optional[str], Optional[str], Optional[str]]:
     """Initialize WandB for DDP training using Pass-the-Baton strategy.
 
     Phase 1 (Pre-Train): Creates run, sets environment variables, then
@@ -73,7 +76,7 @@ def initialize_wandb_for_ddp(
 
     Args:
         config: Detection configuration dictionary
-        experiment_name: Name for this experiment run
+        experiment_name: Name for this experiment run (from config)
 
     Returns:
         Tuple of (run_id, run_name, project) for post-training re-init,
@@ -95,9 +98,6 @@ def initialize_wandb_for_ddp(
         wandb.finish()
     else:
         wandb_config = config.get("wandb", {})
-
-        # CRITICAL: All values must come from config.yaml, no hard-coding
-        # Raise error if required config is missing to ensure centralized management
         if "project" not in wandb_config:
             raise ValueError(
                 "wandb.project is required in config.yaml. "
@@ -105,19 +105,17 @@ def initialize_wandb_for_ddp(
             )
 
         run = wandb.init(
-            project=wandb_config["project"],  # Required from config, no default
-            entity=wandb_config.get("entity"),  # Optional
+            project=wandb_config["project"],
+            entity=wandb_config.get("entity"),
             name=experiment_name or wandb_config.get("name"),
             config={
                 "model": config.get("model", {}),
                 "training": config.get("training", {}),
                 "augmentation": config.get("augmentation", {}),
-                "validation": config.get("validation", {}),
             },
             tags=wandb_config.get("tags", []),
             notes=wandb_config.get(
-                "notes",
-                "YOLOv11 training for container door detection",
+                "notes", "YOLOv11 training for container door detection"
             ),
             save_code=True,
         )
@@ -129,226 +127,207 @@ def initialize_wandb_for_ddp(
         run_id = run.id
         run_name = run.name
         project = run.project
-
-        logging.info(f"WandB run created: {run_name}")
-        logging.info(f"WandB URL: {run.url}")
-
-        # CRITICAL: Finish immediately to release lock for DDP workers
+        logging.info(f"WandB run created: {run_name} ({run.url})")
         run.finish()
         logging.info("WandB run finished (Pass-the-Baton Phase 1 complete)")
 
-    # Set environment variables for Ultralytics to adopt
     os.environ["WANDB_RUN_ID"] = run_id
     os.environ["WANDB_PROJECT"] = project
-    os.environ["WANDB_NAME"] = run_name  # Critical: Preserves run name on dashboard
-
-    logging.info(f"Environment variables set for DDP:")
-    logging.info(f"  WANDB_RUN_ID: {run_id}")
-    logging.info(f"  WANDB_PROJECT: {project}")
-    logging.info(f"  WANDB_NAME: {run_name}")
+    os.environ["WANDB_NAME"] = run_name
+    logging.debug(
+        f"WandB env vars set: RUN_ID={run_id}, PROJECT={project}, NAME={run_name}"
+    )
 
     return run_id, run_name, project
 
 
-def prepare_training_args(
-    config: Dict[str, Any],
-    data_yaml_abs: str,
-    experiment_name: Optional[str] = None,
-    config_path: Optional[Path] = None,
-) -> Dict[str, Any]:
-    """
-    Prepare training arguments for Ultralytics YOLO.train().
+def validate_experiment_name(name: Optional[str]) -> str:
+    """Validate and sanitize experiment name for file paths.
 
     Args:
-        config: Detection configuration
-        data_yaml_abs: Absolute path to data.yaml file (already converted)
-        experiment_name: Name for this experiment run (used for output directory)
-        config_path: Path to config file (needed to load hardware settings)
+        name: Experiment name (can be None)
 
     Returns:
-        Dictionary of training arguments (EXCLUDES wandb config)
+        Validated experiment name
+
+    Raises:
+        ValueError: If name contains invalid characters
     """
-    model_cfg = config.get("model", {})
-    train_cfg = config.get("training", {})
-    aug_cfg = config.get("augmentation", {})
+    if not name:
+        return "default"
 
-    # Force output to artifacts/detection/[experiment_name]/train/ for clean directory structure
-    # This creates: artifacts/detection/[experiment_name]/train/weights/best.pt
-    # Separate from test outputs: artifacts/detection/[experiment_name]/test/
-    project_name = (
-        f"artifacts/detection/{experiment_name}"
-        if experiment_name
-        else "artifacts/detection/default"
-    )
-    run_name = "train"
+    sanitized = re.sub(r"[^a-zA-Z0-9_-]", "-", name)
+    sanitized = re.sub(r"-+", "-", sanitized)
+    sanitized = sanitized.strip("-")
 
-    # Load hardware configuration from the SAME config file
-    # (Not from params.yaml, to allow experiment-specific hardware settings)
-    hardware_cfg = {}
-    if config_path:
-        # Handle new structure: if path is a directory, look for train.yaml
-        if config_path.is_dir():
-            train_file = config_path / "train.yaml"
-            if train_file.exists():
-                config_path = train_file
-            else:
-                config_path = None
+    if not sanitized:
+        raise ValueError(
+            f"Invalid experiment name '{name}': must contain at least one alphanumeric character"
+        )
 
-        if config_path and config_path.exists():
-            try:
-                with open(config_path, "r", encoding="utf-8") as f:
-                    full_params = yaml.safe_load(f)
-                hardware_cfg = full_params.get("hardware", {})
-            except Exception:
-                hardware_cfg = {}
+    if len(sanitized) > 100:
+        raise ValueError(
+            f"Experiment name too long: {len(sanitized)} characters (max 100)"
+        )
 
-    # GPU Configuration: Auto-detect available GPUs and configure device
+    return sanitized
+
+
+def configure_device(hardware_cfg: Dict[str, Any]) -> Union[int, List[int]]:
+    """Configure GPU device(s) based on hardware config and availability.
+
+    Args:
+        hardware_cfg: Hardware configuration dictionary
+
+    Returns:
+        Device ID (int) or list of device IDs for multi-GPU
+
+    Raises:
+        RuntimeError: If no GPU available
+        ImportError: If PyTorch not installed
+    """
     try:
         import torch
-
-        if not torch.cuda.is_available():
-            raise RuntimeError(
-                "No GPU detected! This training script requires CUDA-enabled GPU.\n"
-                "Possible solutions:\n"
-                "  1. Check NVIDIA driver installation: nvidia-smi\n"
-                "  2. Verify PyTorch CUDA installation: python -c 'import torch; print(torch.cuda.is_available())'\n"
-                "  3. Install PyTorch with CUDA: pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118"
-            )
-
-        gpu_count = torch.cuda.device_count()
-        multi_gpu_enabled = hardware_cfg.get("multi_gpu", False)
-
-        if gpu_count == 0:
-            raise RuntimeError(
-                "torch.cuda.is_available() is True but device_count() is 0"
-            )
-
-        elif gpu_count == 1:
-            # Single GPU available
-            device = 0
-            logging.info("=" * 70)
-            logging.info("🎯 GPU Configuration: SINGLE GPU MODE")
-            logging.info("=" * 70)
-            logging.info(f"GPU Detected: {torch.cuda.get_device_name(0)}")
-            logging.info(
-                f"VRAM: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.2f} GB"
-            )
-            logging.info("Status: Training will use GPU 0")
-            if multi_gpu_enabled:
-                logging.info("Note: multi_gpu=True in config, but only 1 GPU available")
-            logging.info("=" * 70)
-            logging.info("")
-
-        else:
-            # Multiple GPUs available
-            if multi_gpu_enabled:
-                # Use all available GPUs
-                device = list(range(gpu_count))
-                logging.info("=" * 70)
-                logging.info("🚀 GPU Configuration: MULTI-GPU MODE")
-                logging.info("=" * 70)
-                logging.info(f"GPUs Detected: {gpu_count}")
-                for i in range(gpu_count):
-                    logging.info(f"  GPU {i}: {torch.cuda.get_device_name(i)}")
-                    logging.info(
-                        f"    VRAM: {torch.cuda.get_device_properties(i).total_memory / 1024**3:.2f} GB"
-                    )
-                logging.info(f"Status: Training will use GPUs {device}")
-                logging.info("Note: Distributed Data Parallel (DDP) will be used")
-                logging.info("=" * 70)
-                logging.info("")
-            else:
-                # Multi-GPU available but not enabled in config
-                device = 0
-                logging.info("=" * 70)
-                logging.info(
-                    "🎯 GPU Configuration: SINGLE GPU MODE (Multi-GPU Available)"
-                )
-                logging.info("=" * 70)
-                logging.info(f"GPUs Detected: {gpu_count}")
-                for i in range(gpu_count):
-                    logging.info(f"  GPU {i}: {torch.cuda.get_device_name(i)}")
-                logging.info(f"Status: Training will use GPU 0 only")
-                logging.info("Reason: multi_gpu=False in config")
-                logging.info(
-                    f"Performance: Consider enabling multi_gpu=True for ~{gpu_count}x speedup"
-                )
-                logging.info("=" * 70)
-                logging.info("")
-
     except ImportError:
         raise ImportError(
             "PyTorch not installed. Install with: pip install torch torchvision"
         )
 
-    args = {
-        # Data
-        "data": data_yaml_abs,  # Use absolute path
-        # Training
-        "epochs": train_cfg.get("epochs", 100),
-        "batch": train_cfg.get("batch_size", 16),
-        "imgsz": 640,
-        "device": device,  # Dynamic device configuration
-        # Optimizer
-        "optimizer": train_cfg.get("optimizer", "AdamW"),
-        "lr0": train_cfg.get("learning_rate", 0.001),
-        "lrf": 0.01,  # Final learning rate = lr0 * lrf
-        "momentum": 0.937,
-        "weight_decay": train_cfg.get("weight_decay", 0.0005),
-        # Scheduler
-        "warmup_epochs": train_cfg.get("warmup_epochs", 3),
-        "warmup_momentum": 0.8,
-        "warmup_bias_lr": 0.1,
-        "cos_lr": (train_cfg.get("lr_scheduler") == "cosine"),
-        # Early stopping
-        "patience": train_cfg.get("patience", 20),
-        # Augmentation
-        "hsv_h": aug_cfg.get("hsv_h", 0.015),
-        "hsv_s": aug_cfg.get("hsv_s", 0.7),
-        "hsv_v": aug_cfg.get("hsv_v", 0.4),
-        "degrees": aug_cfg.get("degrees", 10.0),
-        "translate": aug_cfg.get("translate", 0.1),
-        "scale": aug_cfg.get("scale", 0.5),
-        "shear": aug_cfg.get("shear", 10.0),
-        "perspective": aug_cfg.get("perspective", 0.0),
-        "flipud": aug_cfg.get("flipud", 0.0),
-        "fliplr": aug_cfg.get("fliplr", 0.5),
-        "mosaic": aug_cfg.get("mosaic", 1.0),
-        "mixup": aug_cfg.get("mixup", 0.0),
-        "copy_paste": aug_cfg.get("copy_paste", 0.0),
-        # Output
+    if not torch.cuda.is_available():
+        is_kaggle = Path("/kaggle/working").exists()
+        verify_cmd = (
+            "python -c 'import torch; print(torch.cuda.is_available())'"
+            if is_kaggle
+            else "uv run python -c 'import torch; print(torch.cuda.is_available())'"
+        )
+        raise RuntimeError(
+            "No GPU detected! This training script requires CUDA-enabled GPU.\n"
+            f"Possible solutions:\n"
+            f"  1. Check NVIDIA driver installation: nvidia-smi\n"
+            f"  2. Verify PyTorch CUDA installation: {verify_cmd}\n"
+            f"  3. Install PyTorch with CUDA: pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118"
+        )
+
+    gpu_count = torch.cuda.device_count()
+    if gpu_count == 0:
+        raise RuntimeError("torch.cuda.is_available() is True but device_count() is 0")
+
+    multi_gpu_enabled = hardware_cfg.get("multi_gpu", False)
+
+    if gpu_count == 1:
+        device = 0
+        logging.info(f"GPU: {torch.cuda.get_device_name(0)} (Single GPU mode)")
+        if multi_gpu_enabled:
+            logging.warning("multi_gpu=True in config, but only 1 GPU available")
+    else:
+        if multi_gpu_enabled:
+            device = list(range(gpu_count))
+            logging.info(f"GPUs: {gpu_count} devices (Multi-GPU DDP mode)")
+            for i in range(gpu_count):
+                logging.info(f"  GPU {i}: {torch.cuda.get_device_name(i)}")
+        else:
+            device = 0
+            logging.info(
+                f"GPUs: {gpu_count} available, using GPU 0 only (multi_gpu=False)"
+            )
+
+    return device
+
+
+def prepare_training_args(
+    config: Dict[str, Any],
+    data_yaml_abs: str,
+    experiment_name: str,
+    hardware_cfg: Dict[str, Any],
+    output_cfg: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Prepare training arguments for Ultralytics YOLO.train().
+
+    Args:
+        config: Detection configuration dictionary
+        data_yaml_abs: Absolute path to data.yaml file
+        experiment_name: Name for this experiment run (used for output directory)
+        hardware_cfg: Hardware configuration dictionary
+        output_cfg: Output configuration dictionary
+
+    Returns:
+        Dictionary of training arguments for YOLO.train()
+
+    Raises:
+        ValueError: If experiment_name is invalid or config values are invalid
+    """
+    validated_exp_name = validate_experiment_name(experiment_name)
+
+    # Validate config using Pydantic schema
+    try:
+        training_config = DetectionTrainingConfigSchema(
+            **config,
+            hardware=hardware_cfg,
+            output=output_cfg,
+        )
+    except Exception as e:
+        raise ValueError(f"Invalid training configuration: {e}") from e
+
+    train_cfg = training_config.training
+    aug_cfg = training_config.augmentation
+    hardware_cfg_validated = training_config.hardware
+    output_cfg_validated = training_config.output
+
+    # Build output directory
+    project_name = str(Path(output_cfg_validated.base_dir) / validated_exp_name)
+    run_name = output_cfg_validated.train_dir
+
+    # Configure device
+    device = configure_device(hardware_cfg_validated.model_dump())
+
+    return {
+        "data": data_yaml_abs,
+        "epochs": train_cfg.epochs,
+        "batch": train_cfg.batch_size,
+        "imgsz": train_cfg.imgsz,
+        "device": device,
+        "optimizer": train_cfg.optimizer,
+        "lr0": train_cfg.learning_rate,
+        "lrf": train_cfg.lrf,
+        "momentum": train_cfg.momentum,
+        "weight_decay": train_cfg.weight_decay,
+        "warmup_epochs": train_cfg.warmup_epochs,
+        "warmup_momentum": train_cfg.warmup_momentum,
+        "warmup_bias_lr": train_cfg.warmup_bias_lr,
+        "cos_lr": (train_cfg.lr_scheduler == "cosine"),
+        "patience": train_cfg.patience,
+        "hsv_h": aug_cfg.hsv_h,
+        "hsv_s": aug_cfg.hsv_s,
+        "hsv_v": aug_cfg.hsv_v,
+        "degrees": aug_cfg.degrees,
+        "translate": aug_cfg.translate,
+        "scale": aug_cfg.scale,
+        "shear": aug_cfg.shear,
+        "perspective": aug_cfg.perspective,
+        "flipud": aug_cfg.flipud,
+        "fliplr": aug_cfg.fliplr,
+        "mosaic": aug_cfg.mosaic,
+        "mixup": aug_cfg.mixup,
+        "copy_paste": aug_cfg.copy_paste,
         "project": project_name,
         "name": run_name,
         "exist_ok": True,
-        "save": True,  # Save checkpoints (best.pt + last.pt saved automatically)
-        "save_period": -1,  # Only save final epoch (disable periodic saves)
-        "plots": True,
-        "verbose": True,
-        # Performance (dynamically configured)
-        "workers": hardware_cfg.get("num_workers", 4),
-        "amp": hardware_cfg.get("mixed_precision", True),  # Automatic Mixed Precision
-        # Validation
+        "save": True,
+        "save_period": output_cfg_validated.save_period,
+        "plots": output_cfg_validated.save_plots,
+        "verbose": output_cfg_validated.verbose,
+        "workers": hardware_cfg_validated.num_workers,
+        "amp": hardware_cfg_validated.mixed_precision,
         "val": True,
-        "save_json": True,
-        # NOTE: WandB configuration is handled via environment variables (WANDB_RUN_ID, WANDB_PROJECT, WANDB_NAME)
-        # set by initialize_wandb_for_ddp(). Ultralytics will automatically read these env vars.
+        "save_json": output_cfg_validated.save_json,
     }
 
-    return args
 
-
-def train_detection_model(
-    config_path: Path,
-    experiment_name: Optional[str] = None,
-    data_yaml: str = "data/processed/detection/data.yaml",
-) -> Dict[str, Any]:
-    """
-    Train YOLOv11 detection model.
+def train_detection_model(config_path: Path) -> Dict[str, Any]:
+    """Train YOLOv11 detection model.
 
     Args:
-        config_path: Path to configuration file
-        experiment_name: Name for experiment (uses config default if None)
-        data_yaml: Path to dataset configuration file
+        config_path: Path to YAML configuration file (e.g., experiments/detection/001_baseline/train.yaml)
 
     Returns:
         Dictionary containing training results and metrics
@@ -356,248 +335,234 @@ def train_detection_model(
     Raises:
         ImportError: If ultralytics not installed
         FileNotFoundError: If config or data files not found
+        ValueError: If configuration is invalid
     """
-    # Setup
     setup_logging()
     logger = logging.getLogger(__name__)
 
-    # Convert data_yaml to absolute path early for use throughout the function
-    data_yaml_abs = str(Path(data_yaml).absolute())
+    # Load full configuration
+    logger.info("Loading configuration...")
+    full_config = load_full_config(config_path)
+    config = full_config["detection"]
+    hardware_cfg = full_config.get("hardware", {})
+    output_cfg = full_config.get("output", {})
 
+    # Get experiment_name and data_yaml from config
+    experiment_name = config.get("experiment_name") or config.get("wandb", {}).get(
+        "name"
+    )
+    data_yaml = config.get("data_yaml", "data/processed/detection/data.yaml")
+
+    # Validate data_yaml path
+    data_yaml_path = Path(data_yaml)
+    if not data_yaml_path.exists():
+        raise FileNotFoundError(
+            f"Dataset configuration file not found: {data_yaml}\n"
+            "Please ensure the data.yaml file exists or provide the correct path in config."
+        )
+    data_yaml_abs = str(data_yaml_path.absolute())
+
+    model_name = config["model"]["architecture"]
     logger.info("=" * 60)
     logger.info("Container Door Detection Training")
     logger.info("=" * 60)
     logger.info(f"Start time: {datetime.now().isoformat()}")
     logger.info(f"Configuration: {config_path}")
-    logger.info(f"Dataset: {data_yaml} (absolute: {data_yaml_abs})")
+    logger.info(f"Model: {model_name}")
+    logger.info(f"Dataset: {data_yaml_abs}")
 
-    # Load configuration
-    logger.info("Loading configuration...")
-    config = load_training_config(config_path)
-    model_name = config["model"]["architecture"]
-    logger.info(f"Model architecture: {model_name}")
-
-    # Initialize WandB using Pass-the-Baton strategy (Phase 1: Pre-Train)
-    # This creates run, sets environment variables, then finishes to release lock
-    logger.info("Initializing experiment tracking (Pass-the-Baton Phase 1)...")
+    # Initialize WandB (Pass-the-Baton Phase 1)
+    logger.info("Initializing experiment tracking...")
     run_id, run_name, wandb_project = initialize_wandb_for_ddp(config, experiment_name)
 
-    # CRITICAL: Import YOLO AFTER setting environment variables
-    # This ensures Ultralytics reads WANDB_PROJECT and WANDB_NAME from environment
-    logger.debug("Importing Ultralytics YOLO (after env vars set)...")
+    # Import YOLO after setting environment variables
     try:
         from ultralytics import YOLO, settings
     except ImportError:
         logger.error("Ultralytics not installed. Install with: pip install ultralytics")
         raise
 
-    # Configure Ultralytics WandB settings
-    logger.info("Configuring Ultralytics WandB settings...")
-    try:
-        settings.update({"wandb": True})
-        logger.info("WandB auto-logging ENABLED")
-        logger.info(
-            "Ultralytics will use WANDB_PROJECT and WANDB_NAME from environment"
-        )
-    except Exception as e:
-        logger.warning(f"Could not configure Ultralytics settings: {e}")
+    settings.update({"wandb": True})
+    logger.debug("WandB auto-logging enabled for Ultralytics")
 
     # Initialize model
-    logger.info("Initializing model...")
-
-    # Check if resuming from checkpoint
     resume_from = config["model"].get("resume_from")
-
     if resume_from:
-        # Resume training from checkpoint
         resume_path = Path(resume_from)
         if not resume_path.exists():
-            logger.error(f"Resume checkpoint not found: {resume_from}")
-            raise FileNotFoundError(f"Checkpoint not found: {resume_from}")
-
-        logger.info(f"📂 RESUME MODE: Loading checkpoint from {resume_from}")
-        logger.info("   This will continue training from the saved state.")
-        try:
-            model = YOLO(str(resume_path))
-            logger.info(f"✓ Checkpoint loaded successfully")
-        except Exception as e:
-            logger.error(f"Failed to load checkpoint: {e}")
-            raise
+            raise FileNotFoundError(f"Resume checkpoint not found: {resume_from}")
+        logger.info(f"Resuming from checkpoint: {resume_from}")
+        model = YOLO(str(resume_path))
     else:
-        # Train from scratch with pretrained weights
-        logger.info(
-            f"🆕 FRESH TRAINING: Loading {model_name}.pt (pretrained weights will auto-download if needed)..."
-        )
-        # YOLO() will auto-download pretrained weights from Ultralytics GitHub releases
-        # if not found in local cache (~/.cache/ultralytics or current directory)
-        # Explicitly use .pt extension as per official Ultralytics documentation
-        try:
-            model = YOLO(f"{model_name}.pt")
-            logger.info(f"✓ Model loaded successfully: {model_name}.pt")
-        except Exception as e:
-            logger.error(f"Failed to load model: {e}")
-            logger.info("Possible causes:")
-            logger.info("  1. Network connection issue preventing download")
-            logger.info(
-                "  2. Invalid model name (available: yolo11n, yolo11s, yolo11m, yolo11l, yolo11x)"
-            )
-            logger.info("  3. Corrupted cache (~/.cache/ultralytics)")
-            raise
+        logger.info(f"Loading pretrained model: {model_name}.pt")
+        model = YOLO(f"{model_name}.pt")
 
     # Prepare training arguments
-    logger.info("Preparing training configuration...")
     train_args = prepare_training_args(
-        config, data_yaml_abs, experiment_name, config_path
+        config, data_yaml_abs, experiment_name, hardware_cfg, output_cfg
     )
 
-    # CRITICAL: Ensure no WandB session is active before training
-    # This forces Ultralytics to read from environment variables
+    # Ensure no active WandB session before training
     try:
         import wandb
 
         if wandb.run is not None:
-            logger.warning(
-                f"Active WandB run detected: {wandb.run.name}. Finishing it..."
-            )
             wandb.finish()
-            logger.info("Previous WandB session finished")
     except ImportError:
         pass
 
-    # Ensure output directory exists (GitHub doesn't track empty folders)
-    # This is critical when cloning fresh repo where weights/ may not exist
+    # Create output directory
     output_dir = Path(train_args["project"]) / train_args["name"]
     output_dir.mkdir(parents=True, exist_ok=True)
     logger.info(f"Output directory: {output_dir.absolute()}")
-
-    logger.info(f"Training for {train_args['epochs']} epochs")
-    logger.info(f"Batch size: {train_args['batch']}")
-    logger.info(f"Learning rate: {train_args['lr0']}")
+    logger.info(
+        f"Training: {train_args['epochs']} epochs, batch={train_args['batch']}, lr={train_args['lr0']}"
+    )
 
     # Train
-    logger.info("Starting training...")
     logger.info("-" * 60)
+
+    def cleanup_wandb(exit_code: int = 0) -> None:
+        """Cleanup WandB session on error/interruption."""
+        try:
+            import wandb
+
+            if wandb.run is not None:
+                wandb.finish(exit_code=exit_code)
+        except Exception:
+            pass
 
     try:
         start_time = datetime.now()
         results = model.train(**train_args)
         end_time = datetime.now()
-    except Exception as e:
+    except KeyboardInterrupt:
+        logger.error("Training interrupted by user")
+        cleanup_wandb(exit_code=130)
+        raise
+    except (RuntimeError, Exception) as e:
         logger.error(f"Training failed: {e}", exc_info=True)
-        # Ensure WandB is cleaned up on error
-        try:
-            import wandb
-
-            if wandb.run is not None:
-                wandb.finish(exit_code=1)
-                logger.info("WandB run finished with error status")
-        except Exception:
-            pass
+        cleanup_wandb(exit_code=1)
         raise
 
     training_duration = (end_time - start_time).total_seconds()
     logger.info("-" * 60)
     logger.info(f"Training completed in {training_duration / 3600:.2f} hours")
 
-    # Clear GPU cache after training to prevent OOM during evaluation
+    # Clear GPU cache
     try:
         import torch
 
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-            logger.info("GPU cache cleared after training")
     except ImportError:
         pass
 
-    # Log final metrics to WandB (with safe access to handle None results)
-    final_metrics = {
-        "training_duration_hours": training_duration / 3600,
-    }
-
-    # Safely extract validation metrics from training results
+    # Extract metrics
+    final_metrics_dict = {"training_duration_hours": training_duration / 3600}
     if results is not None and hasattr(results, "box") and results.box is not None:
-        final_metrics.update(
+        final_metrics_dict.update(
             {
-                "val/mAP50_final": (
+                "val_map50_final": (
                     float(results.box.map50) if results.box.map50 is not None else 0.0
                 ),
-                "val/mAP50-95_final": (
+                "val_map50_95_final": (
                     float(results.box.map) if results.box.map is not None else 0.0
                 ),
-                "val/precision_final": (
+                "val_precision_final": (
                     float(results.box.mp) if results.box.mp is not None else 0.0
                 ),
-                "val/recall_final": (
+                "val_recall_final": (
                     float(results.box.mr) if results.box.mr is not None else 0.0
                 ),
             }
         )
-        logger.info(
-            f"Validation mAP@50: {final_metrics.get('val/mAP50_final', 0.0):.4f}"
-        )
     else:
-        logger.warning("Training results object is None or missing box metrics")
-        final_metrics.update(
+        logger.warning("Training results missing box metrics")
+        final_metrics_dict.update(
             {
-                "val/mAP50_final": 0.0,
-                "val/mAP50-95_final": 0.0,
-                "val/precision_final": 0.0,
-                "val/recall_final": 0.0,
+                "val_map50_final": 0.0,
+                "val_map50_95_final": 0.0,
+                "val_precision_final": 0.0,
+                "val_recall_final": 0.0,
             }
         )
 
-    # Pass-the-Baton Phase 2: Re-init WandB to log final metrics
+    try:
+        final_metrics = TrainingMetricsSchema(**final_metrics_dict)
+    except Exception as e:
+        logger.warning(f"Failed to validate metrics schema: {e}, using dict")
+        final_metrics = final_metrics_dict
+
+    # Log final metrics to WandB (Pass-the-Baton Phase 2)
     if run_id is not None:
         try:
             import wandb
 
-            logger.info("Re-initializing WandB for final metrics logging...")
             run = wandb.init(
-                id=run_id,
-                project=wandb_project,
-                name=run_name,
-                resume="must",
+                id=run_id, project=wandb_project, name=run_name, resume="must"
             )
-            run.log(final_metrics)
-            logger.info("Final metrics logged to WandB")
+            metrics_to_log = (
+                final_metrics.model_dump(mode="json")
+                if isinstance(final_metrics, TrainingMetricsSchema)
+                else final_metrics
+            )
+            run.log(metrics_to_log)
             run.finish()
-            logger.info("WandB run finished (Pass-the-Baton Phase 2 complete)")
+            logger.info("Final metrics logged to WandB")
         except (ImportError, AttributeError) as e:
             logger.warning(f"Could not log final metrics to WandB: {e}")
-    else:
-        logger.info("WandB not configured, skipping final metrics logging")
 
-    # Print final metrics (with safe None checks)
+    # Print final metrics
     logger.info("Final Validation Metrics:")
-    if results is not None and hasattr(results, "box") and results.box is not None:
-        logger.info(f"  mAP@50: {results.box.map50:.4f}")
-        logger.info(f"  mAP@50-95: {results.box.map:.4f}")
-        logger.info(f"  Precision: {results.box.mp:.4f}")
-        logger.info(f"  Recall: {results.box.mr:.4f}")
+    if isinstance(final_metrics, TrainingMetricsSchema):
+        logger.info(f"  mAP@50: {final_metrics.val_map50_final:.4f}")
+        logger.info(f"  mAP@50-95: {final_metrics.val_map50_95_final:.4f}")
+        logger.info(f"  Precision: {final_metrics.val_precision_final:.4f}")
+        logger.info(f"  Recall: {final_metrics.val_recall_final:.4f}")
     else:
-        logger.info(f"  mAP@50: {final_metrics.get('val/mAP50_final', 0.0):.4f}")
-        logger.info(f"  mAP@50-95: {final_metrics.get('val/mAP50-95_final', 0.0):.4f}")
-        logger.info(f"  Precision: {final_metrics.get('val/precision_final', 0.0):.4f}")
-        logger.info(f"  Recall: {final_metrics.get('val/recall_final', 0.0):.4f}")
+        logger.info(f"  mAP@50: {final_metrics.get('val_map50_final', 0.0):.4f}")
+        logger.info(f"  mAP@50-95: {final_metrics.get('val_map50_95_final', 0.0):.4f}")
+        logger.info(f"  Precision: {final_metrics.get('val_precision_final', 0.0):.4f}")
+        logger.info(f"  Recall: {final_metrics.get('val_recall_final', 0.0):.4f}")
 
     # Save metrics to JSON
     metrics_path = output_dir / "metrics.json"
+    metrics_dict = (
+        final_metrics.model_dump(mode="json")
+        if isinstance(final_metrics, TrainingMetricsSchema)
+        else final_metrics
+    )
     with open(metrics_path, "w", encoding="utf-8") as f:
-        json.dump(final_metrics, f, indent=2)
+        json.dump(metrics_dict, f, indent=2)
     logger.info(f"Metrics saved to {metrics_path}")
 
+    model_path = output_dir / "weights" / "best.pt"
     logger.info("=" * 60)
     logger.info("Training Complete!")
-    logger.info("=" * 60)
-    logger.info(f"Model saved to: {output_dir / 'weights' / 'best.pt'}")
+    logger.info(f"Model saved to: {model_path}")
     logger.info("=" * 60)
 
-    return {
-        "results": results,
-        "duration_hours": training_duration / 3600,
-        "final_metrics": final_metrics,
-        "model_path": str(output_dir / "weights" / "best.pt"),
-    }
+    # Return results
+    try:
+        training_results = TrainingResultsSchema(
+            model_path=str(model_path),
+            duration_hours=training_duration / 3600,
+            final_metrics=(
+                final_metrics
+                if isinstance(final_metrics, TrainingMetricsSchema)
+                else TrainingMetricsSchema(**final_metrics)
+            ),
+            results=results,
+        )
+        return training_results.model_dump(mode="json", exclude={"results"})
+    except Exception as e:
+        logger.warning(f"Failed to create results schema: {e}, returning dict")
+        return {
+            "model_path": str(model_path),
+            "duration_hours": training_duration / 3600,
+            "final_metrics": metrics_dict,
+        }
 
 
 def main() -> None:
@@ -606,37 +571,16 @@ def main() -> None:
         description="Train YOLOv11 model for container door detection",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-
     parser.add_argument(
         "--config",
         type=str,
-        default="experiments/detection/001_baseline",
-        help="Path to configuration file or experiment directory (e.g., experiments/detection/001_baseline)",
+        default="experiments/detection/001_baseline/train.yaml",
+        help="Path to YAML configuration file (e.g., experiments/detection/001_baseline/train.yaml)",
     )
-
-    parser.add_argument(
-        "--experiment",
-        type=str,
-        default=None,
-        help="Experiment name for WandB tracking",
-    )
-
-    parser.add_argument(
-        "--data",
-        type=str,
-        default="data/processed/detection/data.yaml",
-        help="Path to dataset configuration file",
-    )
-
     args = parser.parse_args()
 
     try:
-        # Run training
-        train_detection_model(
-            config_path=Path(args.config),
-            experiment_name=args.experiment,
-            data_yaml=args.data,
-        )
+        train_detection_model(config_path=Path(args.config))
     except Exception as e:
         logging.error(f"Training failed: {e}")
         raise

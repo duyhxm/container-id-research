@@ -3,6 +3,13 @@
 # Description: Evaluation settings for testing trained models
 
 evaluation:
+  # Model configuration
+  model_path: weights/detection/best.pt  # Path to trained model weights (.pt file)
+                                        # Can be absolute path or relative to project root
+  
+  # Dataset configuration
+  data_yaml: data/processed/detection/data.yaml  # Path to dataset configuration file
+  
   # Validation thresholds (for evaluation/testing, not training validation)
   validation:
     conf_threshold: 0.25  # Confidence threshold for detection
@@ -14,10 +21,15 @@ evaluation:
     save_json: true       # Save metrics in JSON format
     save_confusion_matrix: true
     
+  # Device configuration
+  device: cpu  # Options: auto, cpu, cuda, mps (auto = auto-detect best available)
+    
   # Output settings
   output:
-    # Output directory will be: artifacts/detection/{experiment_name}/test
-    # This is set dynamically based on experiment name
+    # Output directory for evaluation results (REQUIRED)
+    # Can be absolute path or relative to project root
+    output_dir: artifacts/detection/001_baseline/test
+    
     save_predictions: true   # Save prediction results
     save_images: false      # Set to true to save annotated images with bounding boxes
 

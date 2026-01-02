@@ -76,23 +76,6 @@ class TestLoadTrainingConfig:
         assert config["training"]["batch_size"] == 32
         assert config["wandb"]["project"] == "container-id-research"
 
-    def test_load_from_train_yaml_file_directly(self, tmp_path):
-        """Test loading training config from train.yaml file path."""
-        train_file = tmp_path / "train.yaml"
-        train_config = {
-            "detection": {
-                "model": {"architecture": "yolo11s"},
-                "training": {"epochs": 100},
-            }
-        }
-
-        with open(train_file, "w", encoding="utf-8") as f:
-            yaml.dump(train_config, f)
-
-        config = load_training_config(train_file)
-        assert config["model"]["architecture"] == "yolo11s"
-        assert config["training"]["epochs"] == 100
-
     def test_directory_without_train_yaml_raises_error(self, tmp_path):
         """Test that directory without train.yaml raises FileNotFoundError."""
         exp_dir = tmp_path / "detection" / "001_baseline"
@@ -126,7 +109,7 @@ class TestLoadTrainingConfig:
 
         with pytest.raises(FileNotFoundError) as exc_info:
             load_training_config(nonexistent)
-        assert "not found" in str(exc_info.value).lower()
+        assert "experiment directory" in str(exc_info.value).lower()
 
     def test_load_hardware_config_from_directory(self, tmp_path):
         """Test that hardware config is accessible from directory structure."""
@@ -201,34 +184,6 @@ class TestLoadEvaluationConfig:
         assert config["validation"]["iou_threshold"] == 0.45
         assert config["metrics"]["save_plots"] is True
 
-    def test_fallback_to_train_yaml_validation_section(self, tmp_path):
-        """Test fallback to train.yaml validation section when eval.yaml missing."""
-        exp_dir = tmp_path / "detection" / "001_baseline"
-        exp_dir.mkdir(parents=True)
-
-        # Create train.yaml with validation section (no eval.yaml)
-        train_config = {
-            "detection": {
-                "model": {"architecture": "yolo11s"},
-                "validation": {
-                    "conf_threshold": 0.3,
-                    "iou_threshold": 0.5,
-                },
-            }
-        }
-
-        train_file = exp_dir / "train.yaml"
-        with open(train_file, "w", encoding="utf-8") as f:
-            yaml.dump(train_config, f)
-
-        # Load config (should fallback to train.yaml)
-        config = load_evaluation_config(exp_dir)
-
-        # Verify it extracted validation section
-        assert "validation" in config
-        assert config["validation"]["conf_threshold"] == 0.3
-        assert config["validation"]["iou_threshold"] == 0.5
-
     def test_directory_without_eval_or_validation_raises_error(self, tmp_path):
         """Test that directory without eval.yaml or validation raises error."""
         exp_dir = tmp_path / "detection" / "001_baseline"
@@ -251,28 +206,12 @@ class TestLoadEvaluationConfig:
             load_evaluation_config(exp_dir)
         assert "eval.yaml not found" in str(exc_info.value)
 
-    def test_load_from_eval_yaml_file_directly(self, tmp_path):
-        """Test loading evaluation config from eval.yaml file path."""
-        eval_file = tmp_path / "eval.yaml"
-        eval_config = {
-            "evaluation": {
-                "validation": {
-                    "conf_threshold": 0.25,
-                    "iou_threshold": 0.45,
-                }
-            }
-        }
-
-        with open(eval_file, "w", encoding="utf-8") as f:
-            yaml.dump(eval_config, f)
-
-        config = load_evaluation_config(eval_file)
-        assert config["validation"]["conf_threshold"] == 0.25
-        assert config["validation"]["iou_threshold"] == 0.45
-
     def test_missing_evaluation_section_raises_error(self, tmp_path):
         """Test that config without evaluation section raises ValueError."""
-        eval_file = tmp_path / "eval.yaml"
+        exp_dir = tmp_path / "detection" / "001_baseline"
+        exp_dir.mkdir(parents=True)
+
+        eval_file = exp_dir / "eval.yaml"
         invalid_config = {
             "validation": {"conf_threshold": 0.25}  # Missing "evaluation" wrapper
         }
@@ -281,28 +220,8 @@ class TestLoadEvaluationConfig:
             yaml.dump(invalid_config, f)
 
         with pytest.raises(ValueError) as exc_info:
-            load_evaluation_config(eval_file)
+            load_evaluation_config(exp_dir)
         assert "evaluation" in str(exc_info.value).lower()
-
-    def test_old_structure_detection_validation_section(self, tmp_path):
-        """Test loading from old structure (detection.validation section)."""
-        old_config_file = tmp_path / "old_config.yaml"
-        old_config = {
-            "detection": {
-                "model": {"architecture": "yolo11s"},
-                "validation": {
-                    "conf_threshold": 0.25,
-                    "iou_threshold": 0.45,
-                },
-            }
-        }
-
-        with open(old_config_file, "w", encoding="utf-8") as f:
-            yaml.dump(old_config, f)
-
-        config = load_evaluation_config(old_config_file)
-        assert "validation" in config
-        assert config["validation"]["conf_threshold"] == 0.25
 
 
 class TestConfigIntegration:
@@ -384,17 +303,16 @@ class TestConfigIntegration:
             load_training_config(exp_dir)
         assert "empty or invalid" in str(exc_info.value).lower()
 
-    def test_fallback_train_yaml_without_validation_section(self, tmp_path):
-        """Test fallback when train.yaml exists but has no validation section."""
+    def test_directory_without_eval_yaml_raises_error(self, tmp_path):
+        """Test that directory without eval.yaml raises FileNotFoundError."""
         exp_dir = tmp_path / "detection" / "001_baseline"
         exp_dir.mkdir(parents=True)
 
-        # Create train.yaml without validation section
+        # Create train.yaml but no eval.yaml
         train_config = {
             "detection": {
                 "model": {"architecture": "yolo11s"},
                 "training": {"epochs": 100},
-                # No validation section
             }
         }
 
@@ -402,51 +320,8 @@ class TestConfigIntegration:
         with open(train_file, "w", encoding="utf-8") as f:
             yaml.dump(train_config, f)
 
-        # Should raise error because eval.yaml doesn't exist and no validation in train.yaml
+        # Should raise error because eval.yaml doesn't exist
         with pytest.raises(FileNotFoundError) as exc_info:
             load_evaluation_config(exp_dir)
         assert "eval.yaml not found" in str(exc_info.value)
-
-    def test_directory_with_train_yaml_but_no_eval_yaml_fallback(self, tmp_path):
-        """Test that fallback to train.yaml works when eval.yaml is missing."""
-        exp_dir = tmp_path / "detection" / "001_baseline"
-        exp_dir.mkdir(parents=True)
-
-        # Create train.yaml with validation section
-        train_config = {
-            "detection": {
-                "model": {"architecture": "yolo11s"},
-                "validation": {
-                    "conf_threshold": 0.35,
-                    "iou_threshold": 0.55,
-                },
-            }
-        }
-
-        train_file = exp_dir / "train.yaml"
-        with open(train_file, "w", encoding="utf-8") as f:
-            yaml.dump(train_config, f)
-
-        # Should successfully fallback to train.yaml validation section
-        config = load_evaluation_config(exp_dir)
-        assert config["validation"]["conf_threshold"] == 0.35
-        assert config["validation"]["iou_threshold"] == 0.55
-
-    def test_old_structure_file_path(self, tmp_path):
-        """Test loading from old structure (direct file path, not directory)."""
-        old_config_file = tmp_path / "001_det_baseline.yaml"
-        old_config = {
-            "detection": {
-                "model": {"architecture": "yolo11s"},
-                "training": {"epochs": 100},
-            }
-        }
-
-        with open(old_config_file, "w", encoding="utf-8") as f:
-            yaml.dump(old_config, f)
-
-        # Should work with old structure
-        config = load_training_config(old_config_file)
-        assert config["model"]["architecture"] == "yolo11s"
-        assert config["training"]["epochs"] == 100
 

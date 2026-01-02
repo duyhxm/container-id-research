@@ -3,6 +3,10 @@
 # Description: YOLOv11s baseline training
 
 detection:
+  # Experiment configuration
+  experiment_name: detection_exp001_yolo11s_baseline  # Experiment name for output directory (optional, defaults to wandb.name)
+  data_yaml: data/processed/detection/data.yaml  # Path to dataset configuration file
+  
   # Model configuration
   model:
     architecture: yolo11s  # YOLOv11-Small (~45 MB, optimal for research)
@@ -24,6 +28,15 @@ detection:
     # Early stopping
     patience: 30  # Increased patience for research (from 20)
     
+    # Advanced optimizer settings (previously hardcoded)
+    lrf: 0.01  # Final learning rate factor (lr0 * lrf)
+    momentum: 0.937  # SGD momentum (used if optimizer=SGD)
+    warmup_momentum: 0.8  # Momentum during warmup
+    warmup_bias_lr: 0.1  # Bias learning rate during warmup
+    
+    # Image size (previously hardcoded)
+    imgsz: 640  # Input image size for training
+    
   # Augmentation (YOLO built-in)
   augmentation:
     hsv_h: 0.015
@@ -42,8 +55,8 @@ detection:
     
   # Experiment tracking
   wandb:
-    project: container-id-research
-    entity: null  # Set to your wandb username
+    project: container-door-detection
+    entity: duyhxm
     name: detection_exp001_yolo11s_baseline
     tags:
       - module1
@@ -65,4 +78,20 @@ hardware:
   num_workers: 8  # Increased for dual GPU (from 4)
   pin_memory: true
   mixed_precision: true  # AMP for faster training
+
+# Output configuration (Previously hardcoded)
+output:
+  # Base directory for all outputs
+  base_dir: artifacts/detection  # Base directory for detection module outputs
+  
+  # Subdirectory name for training outputs
+  train_dir: train  # Training outputs: {base_dir}/{experiment_name}/{train_dir}/
+  
+  # Checkpoint saving
+  save_period: -1  # Save checkpoint every N epochs (-1 = only final epoch, best.pt + last.pt)
+  
+  # Output files
+  save_plots: true   # Save training plots (loss curves, etc.)
+  save_json: true    # Save metrics in JSON format
+  verbose: true      # Verbose logging during training
 
