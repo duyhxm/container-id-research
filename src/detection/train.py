@@ -68,109 +68,96 @@ def load_full_config(config_path: Path) -> Dict[str, Any]:
     return params
 
 
-def setup_wandb_callback(
-    model: Any, config: Dict[str, Any], experiment_name: Optional[str]
-) -> bool:
-    """Setup WandB callback for Ultralytics integration.
+def setup_wandb_config(
+    config: Dict[str, Any], experiment_name: Optional[str]
+) -> Dict[str, str]:
+    """
+    Prepare WandB configuration to be passed to trainer args.
 
-    This function uses wandb.integration.ultralytics.add_wandb_callback to properly
-    integrate WandB with Ultralytics, ensuring correct project/run naming and metrics
-    logging. This is the OFFICIAL WandB integration method for Ultralytics.
+    The WandB callback in Ultralytics reads project/name from trainer.args
+    and auto-creates the run with proper config (including trainer.args).
+    This ensures metrics are properly logged.
 
     Args:
-        model: Ultralytics YOLO model instance
-        config: Detection configuration dictionary
-        experiment_name: Name for this experiment run (from config)
+        config: Training configuration dict
+        experiment_name: Name of the experiment
 
     Returns:
-        True if WandB callback is configured successfully, False otherwise
-
-    Reference:
-        - WandB Docs: https://docs.wandb.ai/models/integrations/ultralytics
-        - Ultralytics Callback Issue: https://github.com/ultralytics/ultralytics/issues/17506
+        dict: WandB config with project, entity, and name keys, or empty dict if disabled
     """
+    # Get WandB configuration
+    wandb_config = config.get("wandb", {})
+    if not wandb_config.get("enabled", True):
+        logging.info("WandB tracking is disabled in config")
+        return {}
+
+    # Try to authenticate with WandB
     try:
         import wandb
+
+        api = wandb.Api()
+        username = api.viewer.username
+        logging.info(f"WandB authenticated as: {username}")
+    except ImportError:
+        logging.warning(
+            "WandB integration not available. " "Install with: pip install wandb"
+        )
+        return {}
+    except Exception as e:
+        logging.warning(f"WandB authentication failed: {e}")
+        return {}
+
+    # Get project and run configuration
+    project_name = wandb_config.get("project", "container-door-detection")
+    entity = wandb_config.get("entity")
+    run_name = wandb_config.get("name") or experiment_name
+
+    logging.info(
+        f"WandB config: project='{project_name}', entity='{entity}', run_name='{run_name}'"
+    )
+
+    return {
+        "project": project_name,
+        "entity": entity,
+        "name": run_name,
+    }
+
+
+def add_wandb_callback_to_model(model: Any) -> bool:
+    """
+    Add WandB callback to the model.
+
+    The callback will auto-create a WandB run using trainer.args.project and trainer.args.name
+    when training starts. This ensures the run is created with proper config including
+    all trainer parameters (epochs, batch, lr, etc.) which are necessary for metrics logging.
+
+    Args:
+        model: Initialized YOLO model with trainer args already configured
+
+    Returns:
+        bool: True if callback added successfully, False otherwise
+    """
+    try:
         from wandb.integration.ultralytics import add_wandb_callback
     except ImportError:
-        logging.warning("WandB not installed. Skipping experiment tracking.")
-        return False
-
-    wandb_config = config.get("wandb", {})
-    if "project" not in wandb_config:
-        logging.warning("wandb.project not found in config. Skipping WandB tracking.")
+        logging.warning(
+            "WandB integration not available. " "Install with: pip install wandb"
+        )
         return False
 
     try:
-        # Verify authentication
-        api = wandb.Api()
-        # api.viewer is a property (not a method) that returns a User object
-        username = api.viewer.username
-        logging.info(f"WandB authenticated as: {username}")
-
-        # Log configuration details
-        project_name = wandb_config["project"]
-        run_name = experiment_name or wandb_config.get("name")
-        entity = wandb_config.get("entity")
-
-        logging.info("WandB configuration:")
-        logging.info(f"  Project: {project_name}")
-        logging.info(f"  Entity: {entity or 'default'}")
-        logging.info(f"  Run name: {run_name}")
-
-        # Initialize WandB run with correct project and name
-        # This creates the run BEFORE training starts, ensuring correct naming
-        run = wandb.init(
-            project=project_name,
-            name=run_name,
-            entity=entity,
-            config=config,  # Log full config
-            job_type="train",
-        )
-
-        # Add WandB callback to model
-        # This callback will log metrics to the run we just created
+        # Add callback - it will auto-create run from trainer args on training start
         add_wandb_callback(model, enable_model_checkpointing=False)
-
-        logging.info("WandB callback configured successfully")
-        logging.info(f"View run at: {run.get_url()}")
-
+        logging.info(
+            "WandB callback added to model - run will be created on training start"
+        )
         return True
 
     except Exception as e:
-        error_msg = str(e)
+        logging.error(f"Failed to add WandB callback: {e}")
+        import traceback
 
-        # Analyze error type and provide specific guidance
-        if "403" in error_msg or "permission denied" in error_msg.lower():
-            logging.error("=" * 70)
-            logging.error("WandB PERMISSION ERROR (403)")
-            logging.error("=" * 70)
-            logging.error(f"Error: {error_msg}")
-            logging.error("")
-            logging.error("Possible causes:")
-            logging.error("  1. Invalid or expired WANDB_API_KEY")
-            logging.error("  2. Entity name incorrect or doesn't exist")
-            logging.error(f"     Current entity: {wandb_config.get('entity', 'None')}")
-            logging.error("  3. Project doesn't exist or no permission to create runs")
-            logging.error(
-                f"     Current project: {wandb_config.get('project', 'None')}"
-            )
-            logging.error("  4. Account doesn't have permission to create projects")
-            logging.error("")
-            logging.error("Solutions:")
-            logging.error("  - Verify WANDB_API_KEY in Kaggle Secrets")
-            logging.error("  - Check entity name matches your WandB username")
-            logging.error("  - Create project manually on wandb.ai if it doesn't exist")
-            logging.error("  - Use offline mode: set WANDB_MODE=offline in environment")
-            logging.error("=" * 70)
-        elif "401" in error_msg or "unauthorized" in error_msg.lower():
-            logging.error("WandB AUTHENTICATION ERROR (401)")
-            logging.error(f"Error: {error_msg}")
-            logging.error("Please verify your WANDB_API_KEY is correct")
-        else:
-            logging.warning(f"WandB verification failed: {e}")
-
-        logging.warning("Continuing training without WandB tracking")
+        logging.error(traceback.format_exc())
         return False
 
 
@@ -481,7 +468,7 @@ def apply_wandb_config_to_train_args(train_args, wandb_cfg):
             train_args["project"] = wandb_cfg["project"]
         if "name" in wandb_cfg:
             train_args["name"] = wandb_cfg["name"]
-        logger.info(
+        logging.info(
             f"Applied WandB config to train_args: "
             f"project='{train_args.get('project')}', name='{train_args.get('name')}'"
         )
