@@ -1,8 +1,96 @@
 # Detection Module Configuration
 # Module 1: Container Door Detection
 #
-# This file contains all tunable parameters for the detection inference pipeline.
-# These values can be adjusted to fine-tune model performance during inference.
+# This file contains all tunable parameters for the detection module:
+# - Inference pipeline configuration
+# - Training hyperparameters
+# - Model architecture settings
+# - Experiment tracking configuration
+
+# ============================================================================
+# MODEL CONFIGURATION
+# ============================================================================
+model:
+  # Model architecture
+  # Options: "yolo11n", "yolo11s", "yolo11m", "yolo11l", "yolo11x"
+  architecture: yolo11s
+  
+  # Whether to use pretrained weights (from COCO)
+  pretrained: true
+  
+  # Path to resume training from checkpoint
+  # null = train from scratch, or path to checkpoint (e.g., "artifacts/.../weights/last.pt")
+  resume_from: null
+  
+  # Path to model weights file for inference (relative to project root or absolute path)
+  # Default: weights/detection/best.pt
+  # Can be overridden when initializing DetectionProcessor
+  path: "weights/detection/best.pt"
+
+# ============================================================================
+# TRAINING CONFIGURATION
+# ============================================================================
+training:
+  # Number of training epochs
+  epochs: 150
+  
+  # Batch size (adjust based on GPU memory)
+  # T4 x2: 32, T4 x1: 16, P100: 32
+  batch_size: 32
+  
+  # Optimizer
+  optimizer: AdamW
+  
+  # Learning rate
+  learning_rate: 0.001
+  
+  # Weight decay for regularization
+  weight_decay: 0.0005
+  
+  # Warmup epochs (gradual LR increase at start)
+  warmup_epochs: 5
+  
+  # Learning rate scheduler
+  # Options: "cosine", "linear", "constant"
+  lr_scheduler: cosine
+  
+  # Early stopping patience (epochs without improvement)
+  patience: 30
+
+# ============================================================================
+# AUGMENTATION CONFIGURATION
+# ============================================================================
+augmentation:
+  # HSV color space augmentation
+  hsv_h: 0.015  # Hue shift
+  hsv_s: 0.7    # Saturation variation
+  hsv_v: 0.4    # Value/brightness variation
+  
+  # Geometric transformations
+  degrees: 10.0      # Rotation ±10°
+  translate: 0.1     # Translation 10%
+  scale: 0.5         # Scale factor
+  shear: 10.0        # Shear ±10° (important for angled perspective)
+  perspective: 0.0   # Perspective warp (disabled)
+  
+  # Flip operations
+  flipud: 0.0  # Vertical flip probability (0 = disabled, containers always upright)
+  fliplr: 0.5  # Horizontal flip probability (50%, containers can face either direction)
+  
+  # Advanced augmentations
+  mosaic: 1.0      # Mosaic augmentation probability (100%, always enabled)
+  mixup: 0.0       # Mixup augmentation probability
+  copy_paste: 0.0  # Copy-paste augmentation probability
+
+# ============================================================================
+# VALIDATION CONFIGURATION
+# ============================================================================
+validation:
+  # Confidence threshold for validation/evaluation (0.0-1.0)
+  conf_threshold: 0.25
+  
+  # IoU threshold for Non-Maximum Suppression (NMS) (0.0-1.0)
+  iou_threshold: 0.45
 
 # ============================================================================
 # INFERENCE CONFIGURATION
@@ -42,19 +130,6 @@ inference:
   verbose: false
 
 # ============================================================================
-# MODEL CONFIGURATION
-# ============================================================================
-model:
-  # Path to model weights file (relative to project root or absolute path)
-  # Default: weights/detection/best.pt
-  # Can be overridden when initializing DetectionProcessor
-  path: "weights/detection/best.pt"
-  
-  # Model architecture (for reference, not used if path is provided)
-  # Options: "yolov11n", "yolov11s", "yolov11m", "yolov11l", "yolov11x"
-  architecture: "yolov11s"
-
-# ============================================================================
 # OUTPUT CONFIGURATION
 # ============================================================================
 output:
@@ -66,4 +141,48 @@ output:
   
   # Sort detections by confidence (highest first)
   sort_by_confidence: true
+
+# ============================================================================
+# WANDB (EXPERIMENT TRACKING) CONFIGURATION
+# ============================================================================
+wandb:
+  # WandB project name
+  project: container-id-research
+  
+  # WandB entity (username or team name)
+  # null = use logged-in user
+  entity: null
+  
+  # Experiment name (will be overridden by --experiment argument if provided)
+  name: detection_exp001_yolo11s_baseline
+  
+  # Tags for experiment organization
+  tags:
+    - module1
+    - detection
+    - yolo11s
+
+# ============================================================================
+# HARDWARE CONFIGURATION
+# ============================================================================
+hardware:
+  # Device configuration
+  # Options: "cuda", "cpu", "mps" (for Mac M1/M2)
+  device: cuda
+  
+  # Multi-GPU training
+  # Set to true to use all available GPUs
+  multi_gpu: false
+  
+  # GPU IDs to use (if multi_gpu is true)
+  # Example: [0, 1] for first two GPUs
+  gpu_ids: [0]
+  
+  # Data loading performance
+  num_workers: 4  # Number of data loading workers
+  pin_memory: true  # Pin memory for faster GPU transfer
+  
+  # Mixed precision training (AMP)
+  # Reduces memory usage and speeds up training
+  mixed_precision: true
 

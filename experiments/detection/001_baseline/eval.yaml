@@ -1,0 +1,23 @@
+# Evaluation Configuration for Experiment 001: Detection Baseline
+# Module: Detection
+# Description: Evaluation settings for testing trained models
+
+evaluation:
+  # Validation thresholds (for evaluation/testing, not training validation)
+  validation:
+    conf_threshold: 0.25  # Confidence threshold for detection
+    iou_threshold: 0.45   # IoU threshold for Non-Maximum Suppression (NMS)
+    
+  # Metrics to compute and save
+  metrics:
+    save_plots: true      # Save confusion matrix, PR curves, etc.
+    save_json: true       # Save metrics in JSON format
+    save_confusion_matrix: true
+    
+  # Output settings
+  output:
+    # Output directory will be: artifacts/detection/{experiment_name}/test
+    # This is set dynamically based on experiment name
+    save_predictions: true   # Save prediction results
+    save_images: false      # Set to true to save annotated images with bounding boxes
+

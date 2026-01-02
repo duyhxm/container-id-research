@@ -349,7 +349,11 @@ def configure_git(secrets):
 
 
 def configure_wandb(secrets):
-    """Configure WandB"""
+    """Configure WandB authentication and enable in Ultralytics.
+
+    Args:
+        secrets: Dict with optional WANDB_API_KEY
+    """
     log("5/10", "Configuring WandB", "STEP")
 
     try:
@@ -364,6 +368,24 @@ def configure_wandb(secrets):
             check=False,
         )
         log("5/10", "WandB authenticated")
+
+        log("5/10", "Enabling WandB in Ultralytics...")
+        result = subprocess.run(
+            "yolo settings wandb=True",
+            shell=True,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode == 0:
+            log("5/10", "✓ WandB logging enabled in Ultralytics")
+        else:
+            log(
+                "5/10",
+                f"Warning: Could not enable WandB settings: {result.stderr}",
+                "WARN",
+            )
+
     except Exception as e:
         log("5/10", "WANDB_API_KEY not found, continuing without logging", "WARN")
 
@@ -415,9 +437,19 @@ def display_config():
     """Display training configuration"""
     log("7/10", "Training Configuration", "STEP")
 
+    from pathlib import Path
+
     import yaml
 
-    with open("experiments/001_det_baseline.yaml", "r") as f:
+    # Support both old and new structure
+    config_path = Path("experiments/detection/001_baseline")
+    if config_path.is_dir():
+        train_file = config_path / "train.yaml"
+    else:
+        # Fallback to old structure
+        train_file = Path("experiments/001_det_baseline.yaml")
+
+    with open(train_file, "r") as f:
         params = yaml.safe_load(f)
 
     config = params["detection"]
@@ -453,7 +485,9 @@ def train_model():
     print("   - Model Versioning: Manual DVC add after training")
     print("")
     print("💡 Training mode (fresh/resume) is controlled by config file:")
-    print("   experiments/001_det_baseline.yaml → detection.model.resume_from")
+    print(
+        "   experiments/detection/001_baseline/train.yaml → detection.model.resume_from"
+    )
     print("   - null = Fresh training with pretrained YOLO weights")
     print("   - path = Resume from checkpoint")
     print("=" * 70)
@@ -470,8 +504,8 @@ def train_model():
     #   ✅ Model versioning done manually via dvc add
     log("9/10", "Executing standalone training script...")
     cmd = (
-        f"python src/detection/train_and_evaluate.py "
-        f"--config experiments/001_det_baseline.yaml "
+        f"python src/detection/train.py "
+        f"--config experiments/detection/001_baseline "
         f"--experiment {CONFIG['experiment_name']}"
     )
 
@@ -813,7 +847,15 @@ def main():
             print("Next steps:")
             print("  1. Check WandB dashboard for metrics")
             print("  2. Download model: git checkout <branch> && dvc pull")
-            print("  3. Or download from Kaggle Output tab")
+            print("  3. Run evaluation locally:")
+            exp_name = CONFIG["experiment_name"]
+            print(f"     python src/detection/evaluate.py \\")
+            print(
+                f"       --model artifacts/detection/{exp_name}/train/weights/best.pt \\"
+            )
+            print(f"       --data data/processed/detection/data.yaml \\")
+            print(f"       --split test")
+            print("  4. Or download from Kaggle Output tab")
             print("=" * 70)
         else:
             log("ERROR", "Training failed", "ERROR")
@@ -831,4 +873,5 @@ def main():
 
 
 if __name__ == "__main__":
+    main()
     main()

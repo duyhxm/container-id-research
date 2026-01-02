@@ -23,6 +23,8 @@ from src.detection.config_loader import (
     load_config,
 )
 from src.detection.processor import DetectionProcessor
+from src.detection.train import train_detection_model, load_training_config
+from src.detection.evaluate import evaluate_model, load_evaluation_config
 
 __all__ = [
     "DetectionProcessor",
@@ -30,4 +32,8 @@ __all__ = [
     "Config",
     "get_default_config",
     "load_config",
+    "train_detection_model",
+    "load_training_config",
+    "evaluate_model",
+    "load_evaluation_config",
 ]

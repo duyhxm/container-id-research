@@ -3,13 +3,15 @@ Training Script for Container Door Detection (Module 1)
 
 Trains YOLOv11 model for detecting container doors with:
 - WandB experiment tracking
-- Configuration from experiment config file
+- Configuration from config.yaml
 - Early stopping
 - Checkpoint management
 """
 
 import argparse
+import json
 import logging
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -19,71 +21,133 @@ import yaml
 from src.utils.logging_config import setup_logging
 
 
-def load_config(config_path: Path) -> Dict[str, Any]:
+def load_training_config(config_path: Path) -> Dict[str, Any]:
     """
     Load training configuration from YAML file.
 
+    Supports both old and new experiment structure:
+    - Old: experiments/001_det_baseline.yaml (direct file)
+    - New: experiments/detection/001_baseline/ (directory, reads train.yaml)
+
     Args:
-        config_path: Path to configuration file
+        config_path: Path to configuration file or experiment directory
 
     Returns:
-        Dictionary containing detection configuration
+        Dictionary containing detection training configuration
 
     Raises:
         FileNotFoundError: If config file doesn't exist
         ValueError: If detection section missing
     """
-    if not config_path.exists():
+    # Handle new structure: if path is a directory, look for train.yaml
+    if config_path.is_dir():
+        train_file = config_path / "train.yaml"
+        if train_file.exists():
+            config_path = train_file
+        else:
+            raise FileNotFoundError(
+                f"train.yaml not found in experiment directory: {config_path}"
+            )
+    # Handle old structure: direct file path
+    elif not config_path.exists():
         raise FileNotFoundError(f"Configuration file not found: {config_path}")
 
-    with open(config_path, "r") as f:
+    with open(config_path, "r", encoding="utf-8") as f:
         params = yaml.safe_load(f)
 
+    if params is None:
+        raise ValueError("Configuration file is empty or invalid")
     if "detection" not in params:
         raise ValueError("Configuration must contain 'detection' section")
 
     return params["detection"]
 
 
-def initialize_wandb(config: Dict[str, Any], experiment_name: Optional[str]) -> None:
-    """
-    Initialize Weights & Biases experiment tracking.
+def initialize_wandb_for_ddp(
+    config: Dict[str, Any], experiment_name: Optional[str]
+) -> tuple[Optional[str], Optional[str], Optional[str]]:
+    """Initialize WandB for DDP training using Pass-the-Baton strategy.
+
+    Phase 1 (Pre-Train): Creates run, sets environment variables, then
+    immediately finishes to release lock for DDP workers.
 
     Args:
         config: Detection configuration dictionary
         experiment_name: Name for this experiment run
+
+    Returns:
+        Tuple of (run_id, run_name, project) for post-training re-init,
+        or (None, None, None) if WandB not available
     """
     try:
         import wandb
     except ImportError:
-        logging.warning("wandb not installed, skipping experiment tracking")
-        return
+        logging.warning("WandB not installed. Skipping experiment tracking.")
+        return None, None, None
 
-    # Check if WandB run is already active (e.g., from parent process)
     if wandb.run is not None:
-        logging.info(f"WandB run already active: {wandb.run.name}")
-        logging.info(f"Reusing existing run: {wandb.run.url}")
-        return  # Don't re-initialize, use existing run
+        logging.warning(
+            f"WandB run already active: {wandb.run.name}. Finishing to prevent DDP lock."
+        )
+        run_id = wandb.run.id
+        run_name = wandb.run.name
+        project = wandb.run.project
+        wandb.finish()
+    else:
+        wandb_config = config.get("wandb", {})
 
-    wandb_config = config.get("wandb", {})
+        # CRITICAL: All values must come from config.yaml, no hard-coding
+        # Raise error if required config is missing to ensure centralized management
+        if "project" not in wandb_config:
+            raise ValueError(
+                "wandb.project is required in config.yaml. "
+                "Please add it to your experiment configuration file."
+            )
 
-    wandb.init(
-        project=wandb_config.get("project", "container-id-research"),
-        entity=wandb_config.get("entity"),  # None = use logged-in user
-        name=experiment_name or wandb_config.get("name"),
-        config={
-            "model": config.get("model", {}),
-            "training": config.get("training", {}),
-            "augmentation": config.get("augmentation", {}),
-            "validation": config.get("validation", {}),
-        },
-        tags=wandb_config.get("tags", []),
-        notes="YOLOv11 training for container door detection",
-        save_code=True,
-    )
+        run = wandb.init(
+            project=wandb_config["project"],  # Required from config, no default
+            entity=wandb_config.get("entity"),  # Optional
+            name=experiment_name or wandb_config.get("name"),
+            config={
+                "model": config.get("model", {}),
+                "training": config.get("training", {}),
+                "augmentation": config.get("augmentation", {}),
+                "validation": config.get("validation", {}),
+            },
+            tags=wandb_config.get("tags", []),
+            notes=wandb_config.get(
+                "notes",
+                "YOLOv11 training for container door detection",
+            ),
+            save_code=True,
+        )
 
-    logging.info(f"WandB run initialized: {wandb.run.name}")
-    logging.info(f"WandB URL: {wandb.run.url}")
+        if run is None:
+            logging.warning("WandB run initialization failed")
+            return None, None, None
+
+        run_id = run.id
+        run_name = run.name
+        project = run.project
+
+        logging.info(f"WandB run created: {run_name}")
+        logging.info(f"WandB URL: {run.url}")
+
+        # CRITICAL: Finish immediately to release lock for DDP workers
+        run.finish()
+        logging.info("WandB run finished (Pass-the-Baton Phase 1 complete)")
+
+    # Set environment variables for Ultralytics to adopt
+    os.environ["WANDB_RUN_ID"] = run_id
+    os.environ["WANDB_PROJECT"] = project
+    os.environ["WANDB_NAME"] = run_name  # Critical: Preserves run name on dashboard
+
+    logging.info(f"Environment variables set for DDP:")
+    logging.info(f"  WANDB_RUN_ID: {run_id}")
+    logging.info(f"  WANDB_PROJECT: {project}")
+    logging.info(f"  WANDB_NAME: {run_name}")
+
+    return run_id, run_name, project
 
 
 def prepare_training_args(
@@ -121,13 +185,22 @@ def prepare_training_args(
     # Load hardware configuration from the SAME config file
     # (Not from params.yaml, to allow experiment-specific hardware settings)
     hardware_cfg = {}
-    if config_path and config_path.exists():
-        try:
-            with open(config_path, "r") as f:
-                full_params = yaml.safe_load(f)
-            hardware_cfg = full_params.get("hardware", {})
-        except Exception:
-            hardware_cfg = {}
+    if config_path:
+        # Handle new structure: if path is a directory, look for train.yaml
+        if config_path.is_dir():
+            train_file = config_path / "train.yaml"
+            if train_file.exists():
+                config_path = train_file
+            else:
+                config_path = None
+
+        if config_path and config_path.exists():
+            try:
+                with open(config_path, "r", encoding="utf-8") as f:
+                    full_params = yaml.safe_load(f)
+                hardware_cfg = full_params.get("hardware", {})
+            except Exception:
+                hardware_cfg = {}
 
     # GPU Configuration: Auto-detect available GPUs and configure device
     try:
@@ -257,8 +330,8 @@ def prepare_training_args(
         # Validation
         "val": True,
         "save_json": True,
-        # NOTE: Do NOT pass 'wandb' parameter here
-        # Ultralytics auto-detects initialized WandB session via wandb.run
+        # NOTE: WandB configuration is handled via environment variables (WANDB_RUN_ID, WANDB_PROJECT, WANDB_NAME)
+        # set by initialize_wandb_for_ddp(). Ultralytics will automatically read these env vars.
     }
 
     return args
@@ -289,9 +362,7 @@ def train_detection_model(
     logger = logging.getLogger(__name__)
 
     # Convert data_yaml to absolute path early for use throughout the function
-    from pathlib import Path as DataPath
-
-    data_yaml_abs = str(DataPath(data_yaml).absolute())
+    data_yaml_abs = str(Path(data_yaml).absolute())
 
     logger.info("=" * 60)
     logger.info("Container Door Detection Training")
@@ -300,23 +371,36 @@ def train_detection_model(
     logger.info(f"Configuration: {config_path}")
     logger.info(f"Dataset: {data_yaml} (absolute: {data_yaml_abs})")
 
-    # Check ultralytics is installed
-    try:
-        from ultralytics import YOLO
-    except ImportError:
-        logger.error("ultralytics not installed. Install with: pip install ultralytics")
-        raise
-
     # Load configuration
     logger.info("Loading configuration...")
-    config = load_config(config_path)
+    config = load_training_config(config_path)
     model_name = config["model"]["architecture"]
     logger.info(f"Model architecture: {model_name}")
 
-    # Initialize WandB BEFORE model initialization
-    # Ultralytics will auto-detect wandb.run and log metrics
-    logger.info("Initializing experiment tracking...")
-    initialize_wandb(config, experiment_name)
+    # Initialize WandB using Pass-the-Baton strategy (Phase 1: Pre-Train)
+    # This creates run, sets environment variables, then finishes to release lock
+    logger.info("Initializing experiment tracking (Pass-the-Baton Phase 1)...")
+    run_id, run_name, wandb_project = initialize_wandb_for_ddp(config, experiment_name)
+
+    # CRITICAL: Import YOLO AFTER setting environment variables
+    # This ensures Ultralytics reads WANDB_PROJECT and WANDB_NAME from environment
+    logger.debug("Importing Ultralytics YOLO (after env vars set)...")
+    try:
+        from ultralytics import YOLO, settings
+    except ImportError:
+        logger.error("Ultralytics not installed. Install with: pip install ultralytics")
+        raise
+
+    # Configure Ultralytics WandB settings
+    logger.info("Configuring Ultralytics WandB settings...")
+    try:
+        settings.update({"wandb": True})
+        logger.info("WandB auto-logging ENABLED")
+        logger.info(
+            "Ultralytics will use WANDB_PROJECT and WANDB_NAME from environment"
+        )
+    except Exception as e:
+        logger.warning(f"Could not configure Ultralytics settings: {e}")
 
     # Initialize model
     logger.info("Initializing model...")
@@ -366,6 +450,20 @@ def train_detection_model(
         config, data_yaml_abs, experiment_name, config_path
     )
 
+    # CRITICAL: Ensure no WandB session is active before training
+    # This forces Ultralytics to read from environment variables
+    try:
+        import wandb
+
+        if wandb.run is not None:
+            logger.warning(
+                f"Active WandB run detected: {wandb.run.name}. Finishing it..."
+            )
+            wandb.finish()
+            logger.info("Previous WandB session finished")
+    except ImportError:
+        pass
+
     # Ensure output directory exists (GitHub doesn't track empty folders)
     # This is critical when cloning fresh repo where weights/ may not exist
     output_dir = Path(train_args["project"]) / train_args["name"]
@@ -380,15 +478,28 @@ def train_detection_model(
     logger.info("Starting training...")
     logger.info("-" * 60)
 
-    start_time = datetime.now()
-    results = model.train(**train_args)
-    end_time = datetime.now()
+    try:
+        start_time = datetime.now()
+        results = model.train(**train_args)
+        end_time = datetime.now()
+    except Exception as e:
+        logger.error(f"Training failed: {e}", exc_info=True)
+        # Ensure WandB is cleaned up on error
+        try:
+            import wandb
+
+            if wandb.run is not None:
+                wandb.finish(exit_code=1)
+                logger.info("WandB run finished with error status")
+        except Exception:
+            pass
+        raise
 
     training_duration = (end_time - start_time).total_seconds()
     logger.info("-" * 60)
     logger.info(f"Training completed in {training_duration / 3600:.2f} hours")
 
-    # Clear GPU cache after training to prevent OOM during test evaluation
+    # Clear GPU cache after training to prevent OOM during evaluation
     try:
         import torch
 
@@ -397,18 +508,6 @@ def train_detection_model(
             logger.info("GPU cache cleared after training")
     except ImportError:
         pass
-
-    # Evaluate on test set
-    logger.info("Evaluating on test set...")
-    test_metrics = model.val(
-        data=data_yaml_abs,
-        split="test",
-        save_json=True,
-        plots=True,
-        project=train_args["project"],
-        name="test",
-        exist_ok=True,
-    )
 
     # Log final metrics to WandB (with safe access to handle None results)
     final_metrics = {
@@ -447,57 +546,26 @@ def train_detection_model(
             }
         )
 
-    # Safely extract test metrics
-    if (
-        test_metrics is not None
-        and hasattr(test_metrics, "box")
-        and test_metrics.box is not None
-    ):
-        final_metrics.update(
-            {
-                "test/mAP50": (
-                    float(test_metrics.box.map50)
-                    if test_metrics.box.map50 is not None
-                    else 0.0
-                ),
-                "test/mAP50-95": (
-                    float(test_metrics.box.map)
-                    if test_metrics.box.map is not None
-                    else 0.0
-                ),
-                "test/precision": (
-                    float(test_metrics.box.mp)
-                    if test_metrics.box.mp is not None
-                    else 0.0
-                ),
-                "test/recall": (
-                    float(test_metrics.box.mr)
-                    if test_metrics.box.mr is not None
-                    else 0.0
-                ),
-            }
-        )
-        logger.info(f"Test mAP@50: {final_metrics.get('test/mAP50', 0.0):.4f}")
+    # Pass-the-Baton Phase 2: Re-init WandB to log final metrics
+    if run_id is not None:
+        try:
+            import wandb
+
+            logger.info("Re-initializing WandB for final metrics logging...")
+            run = wandb.init(
+                id=run_id,
+                project=wandb_project,
+                name=run_name,
+                resume="must",
+            )
+            run.log(final_metrics)
+            logger.info("Final metrics logged to WandB")
+            run.finish()
+            logger.info("WandB run finished (Pass-the-Baton Phase 2 complete)")
+        except (ImportError, AttributeError) as e:
+            logger.warning(f"Could not log final metrics to WandB: {e}")
     else:
-        logger.warning("Test metrics object is None or missing box metrics")
-        final_metrics.update(
-            {
-                "test/mAP50": 0.0,
-                "test/mAP50-95": 0.0,
-                "test/precision": 0.0,
-                "test/recall": 0.0,
-            }
-        )
-
-    try:
-        import wandb
-
-        if wandb.run:
-            wandb.log(final_metrics)
-            wandb.finish()
-            logger.info("WandB run finished")
-    except (ImportError, AttributeError):
-        pass
+        logger.info("WandB not configured, skipping final metrics logging")
 
     # Print final metrics (with safe None checks)
     logger.info("Final Validation Metrics:")
@@ -512,43 +580,27 @@ def train_detection_model(
         logger.info(f"  Precision: {final_metrics.get('val/precision_final', 0.0):.4f}")
         logger.info(f"  Recall: {final_metrics.get('val/recall_final', 0.0):.4f}")
 
-    logger.info("Final Test Metrics:")
-    if (
-        test_metrics is not None
-        and hasattr(test_metrics, "box")
-        and test_metrics.box is not None
-    ):
-        logger.info(f"  mAP@50: {test_metrics.box.map50:.4f}")
-        logger.info(f"  mAP@50-95: {test_metrics.box.map:.4f}")
-        logger.info(f"  Precision: {test_metrics.box.mp:.4f}")
-        logger.info(f"  Recall: {test_metrics.box.mr:.4f}")
-    else:
-        logger.info(f"  mAP@50: {final_metrics.get('test/mAP50', 0.0):.4f}")
-        logger.info(f"  mAP@50-95: {final_metrics.get('test/mAP50-95', 0.0):.4f}")
-        logger.info(f"  Precision: {final_metrics.get('test/precision', 0.0):.4f}")
-        logger.info(f"  Recall: {final_metrics.get('test/recall', 0.0):.4f}")
-
     # Save metrics to JSON
-    import json
-
     metrics_path = output_dir / "metrics.json"
-    with open(metrics_path, "w") as f:
+    with open(metrics_path, "w", encoding="utf-8") as f:
         json.dump(final_metrics, f, indent=2)
     logger.info(f"Metrics saved to {metrics_path}")
 
     logger.info("=" * 60)
     logger.info("Training Complete!")
     logger.info("=" * 60)
+    logger.info(f"Model saved to: {output_dir / 'weights' / 'best.pt'}")
+    logger.info("=" * 60)
 
     return {
         "results": results,
-        "test_metrics": test_metrics,
         "duration_hours": training_duration / 3600,
         "final_metrics": final_metrics,
+        "model_path": str(output_dir / "weights" / "best.pt"),
     }
 
 
-def main():
+def main() -> None:
     """Main entry point for training script."""
     parser = argparse.ArgumentParser(
         description="Train YOLOv11 model for container door detection",
@@ -558,8 +610,8 @@ def main():
     parser.add_argument(
         "--config",
         type=str,
-        default="experiments/001_det_baseline.yaml",
-        help="Path to configuration file",
+        default="experiments/detection/001_baseline",
+        help="Path to configuration file or experiment directory (e.g., experiments/detection/001_baseline)",
     )
 
     parser.add_argument(
