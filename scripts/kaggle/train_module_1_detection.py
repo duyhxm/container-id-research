@@ -575,12 +575,15 @@ def configure_wandb(secrets: Dict) -> None:
     except Exception as e:
         logger.warning(f"WandB validation error (non-critical): {e}")
 
-    # Enable WandB in Ultralytics
-    result = run_cmd("yolo settings wandb=True", check=False, capture_output=True)
+    # DISABLE Ultralytics built-in WandB callback
+    # We use wandb.integration.ultralytics.add_wandb_callback in train.py instead
+    # This prevents conflict between built-in callback and manual integration
+    result = run_cmd("yolo settings wandb=False", check=False, capture_output=True)
     if result.returncode == 0:
-        logger.info("WandB logging enabled in Ultralytics")
+        logger.info("Ultralytics built-in WandB callback DISABLED")
+        logger.info("WandB will be managed by train.py using add_wandb_callback()")
     else:
-        logger.warning(f"Could not enable WandB settings: {result.stderr}")
+        logger.warning(f"Could not disable WandB settings: {result.stderr}")
 
 
 def fetch_dataset() -> None:
