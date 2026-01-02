@@ -9,6 +9,7 @@ Trains YOLOv11 model for detecting container doors with:
 """
 
 import argparse
+import csv
 import json
 import logging
 import os
@@ -185,6 +186,63 @@ def setup_wandb_session(
 
         logging.warning("Continuing training without WandB tracking")
         return None
+
+
+def log_training_metrics_from_csv(
+    csv_path: Path, active_run: Any, logger: logging.Logger
+) -> None:
+    """Read training metrics from CSV and log to WandB.
+
+    Ultralytics creates results.csv with per-epoch metrics. This function
+    reads the CSV and logs all metrics to WandB to restore full logging
+    when WandB auto-logging is disabled.
+
+    Args:
+        csv_path: Path to results.csv file
+        active_run: Active WandB run object
+        logger: Logger instance
+    """
+    if not csv_path.exists():
+        logger.warning(f"Results CSV not found: {csv_path}, skipping metrics logging")
+        return
+
+    try:
+        import wandb
+    except ImportError:
+        logger.warning("WandB not available for metrics logging")
+        return
+
+    try:
+        with open(csv_path, "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            metrics_logged = 0
+
+            for row in reader:
+                # Convert all numeric values and log
+                metrics_dict = {}
+                for key, value in row.items():
+                    if key == "epoch":
+                        continue  # Skip epoch, we'll use it as step
+                    try:
+                        # Try to convert to float
+                        float_val = float(value)
+                        metrics_dict[key] = float_val
+                    except (ValueError, TypeError):
+                        # Skip non-numeric values
+                        continue
+
+                if metrics_dict:
+                    # Use epoch as step for proper time series
+                    epoch = int(row.get("epoch", 0))
+                    active_run.log(metrics_dict, step=epoch)
+                    metrics_logged += 1
+
+            logger.info(
+                f"Logged {metrics_logged} epochs of training metrics from {csv_path.name}"
+            )
+
+    except Exception as e:
+        logger.warning(f"Failed to log metrics from CSV: {e}", exc_info=True)
 
 
 def validate_experiment_name(name: Optional[str]) -> str:
@@ -426,6 +484,15 @@ def train_detection_model(config_path: Path) -> Dict[str, Any]:
     logger.info("Setting up WandB session (Hybrid Active-Session)...")
     active_run = setup_wandb_session(config, experiment_name)
 
+    # Store run info for later re-init if needed
+    wandb_run_id = None
+    wandb_run_name = None
+    wandb_project = None
+    if active_run is not None:
+        wandb_run_id = active_run.id
+        wandb_run_name = active_run.name
+        wandb_project = active_run.project
+
     # CRITICAL: Import YOLO AFTER setting environment variables
     # This ensures Ultralytics reads WANDB_PROJECT and WANDB_NAME from environment
     logger.debug("Importing Ultralytics YOLO (after env vars set)...")
@@ -439,13 +506,23 @@ def train_detection_model(config_path: Path) -> Dict[str, Any]:
     logger.info("Configuring Ultralytics WandB settings...")
     try:
         if active_run is not None:
-            # CRITICAL: Disable WandB in Ultralytics when we have active session
-            # This prevents Ultralytics from trying to init new runs in DDP workers
-            # which causes timeout errors. We manage WandB session ourselves.
-            settings.update({"wandb": False})
-            logger.info("WandB auto-logging DISABLED in Ultralytics")
-            logger.info("Using active WandB session managed by setup_wandb_session()")
-            logger.info("Ultralytics metrics will be logged manually to active session")
+            # CRITICAL: Enable WandB in Ultralytics but configure it to resume existing run
+            # Ultralytics will read WANDB_RUN_ID and WANDB_RESUME from environment
+            # to resume the active session instead of creating new runs
+            settings.update({"wandb": True})
+            logger.info("WandB auto-logging ENABLED in Ultralytics")
+            logger.info(
+                "Ultralytics will resume active WandB run using environment variables:"
+            )
+            logger.info(f"  WANDB_RUN_ID: {os.environ.get('WANDB_RUN_ID', 'Not set')}")
+            logger.info(
+                f"  WANDB_PROJECT: {os.environ.get('WANDB_PROJECT', 'Not set')}"
+            )
+            logger.info(f"  WANDB_NAME: {os.environ.get('WANDB_NAME', 'Not set')}")
+            logger.info(f"  WANDB_RESUME: {os.environ.get('WANDB_RESUME', 'Not set')}")
+            logger.info(
+                "DDP workers will resume the same run, preventing timeout errors"
+            )
         else:
             # No active session, let Ultralytics manage WandB
             settings.update({"wandb": True})
@@ -488,10 +565,34 @@ def train_detection_model(config_path: Path) -> Dict[str, Any]:
     # Train with WandB session active
     logger.info("-" * 60)
     logger.info("Starting training with active WandB session...")
+
+    # CRITICAL: Finish active run before training to allow Ultralytics to resume
+    # This enables real-time logging while preventing DDP timeout
     if active_run is not None:
         logger.info(
             f"WandB run name preserved: {active_run.name} (name parameter removed from train_args)"
         )
+        logger.info("Finishing active WandB run to allow Ultralytics resume...")
+        run_id = active_run.id
+        run_name = active_run.name
+        run_project = active_run.project
+
+        # Finish the run but keep env vars for Ultralytics to resume
+        active_run.finish()
+        logger.info(
+            "Active WandB run finished. Ultralytics will resume using env vars."
+        )
+
+        # Ensure env vars are still set (they should be, but double-check)
+        os.environ["WANDB_RUN_ID"] = run_id
+        os.environ["WANDB_PROJECT"] = run_project
+        os.environ["WANDB_NAME"] = run_name
+        os.environ["WANDB_RESUME"] = "allow"
+        logger.info("Environment variables confirmed for Ultralytics resume:")
+        logger.info(f"  WANDB_RUN_ID: {run_id}")
+        logger.info(f"  WANDB_PROJECT: {run_project}")
+        logger.info(f"  WANDB_NAME: {run_name}")
+        logger.info(f"  WANDB_RESUME: allow")
 
     start_time = None
     end_time = None
@@ -499,8 +600,8 @@ def train_detection_model(config_path: Path) -> Dict[str, Any]:
 
     try:
         start_time = datetime.now()
-        # model.train() will use the active WandB session via environment variables
-        # DDP workers will resume the same run using WANDB_RUN_ID
+        # model.train() will resume the WandB run using environment variables
+        # This enables real-time logging while preventing DDP timeout
         results = model.train(**train_args)
         end_time = datetime.now()
 
@@ -513,77 +614,125 @@ def train_detection_model(config_path: Path) -> Dict[str, Any]:
     finally:
         # CRITICAL: Always cleanup WandB session in finally block
         # This ensures proper cleanup even on errors or interruptions
-        if active_run is not None:
+        # Note: active_run was finished before training to allow Ultralytics resume
+        # We need to check if Ultralytics finished the run or if we need to re-init
+        if wandb_run_id is not None:
             try:
                 import wandb
 
-                # Check if run is still active (might have been finished by Ultralytics)
+                # Check if run is still active (Ultralytics might have finished it)
                 run_still_active = (
                     wandb.run is not None
-                    and wandb.run.id == active_run.id
+                    and wandb.run.id == wandb_run_id
                     and not wandb.run.sweep_id  # Not a sweep run
                 )
 
+                if not run_still_active:
+                    # Re-init run to log final metrics
+                    logger.info(
+                        "Re-initializing WandB run for final metrics logging..."
+                    )
+                    try:
+                        active_run = wandb.init(
+                            id=wandb_run_id,
+                            project=wandb_project,
+                            name=wandb_run_name,
+                            resume="must",
+                        )
+                        run_still_active = True
+                    except Exception as e:
+                        logger.warning(f"Could not re-init WandB run: {e}")
+                        run_still_active = False
+
                 if run_still_active:
-                    # Extract and log final metrics if training completed
-                    if start_time is not None and end_time is not None:
-                        training_duration = (end_time - start_time).total_seconds()
-                        final_metrics_dict = {
-                            "training_duration_hours": training_duration / 3600
-                        }
+                    # Get current run (either from re-init or existing)
+                    current_run = wandb.run if wandb.run is not None else None
+                    if current_run is None:
+                        logger.warning(
+                            "Could not get current WandB run, skipping metrics logging"
+                        )
+                    else:
+                        # Log training metrics from CSV if training completed
+                        if start_time is not None and end_time is not None:
+                            # First, log all per-epoch metrics from CSV
+                            results_csv = output_dir / "results.csv"
+                            if results_csv.exists():
+                                logger.info(
+                                    "Logging training metrics from results.csv..."
+                                )
+                                log_training_metrics_from_csv(
+                                    results_csv, current_run, logger
+                                )
+                            else:
+                                logger.warning(
+                                    f"Results CSV not found at {results_csv}, "
+                                    "skipping per-epoch metrics logging"
+                                )
 
-                        if (
-                            results is not None
-                            and hasattr(results, "box")
-                            and results.box is not None
-                        ):
-                            final_metrics_dict.update(
-                                {
-                                    "val_map50_final": (
-                                        float(results.box.map50)
-                                        if results.box.map50 is not None
-                                        else 0.0
-                                    ),
-                                    "val_map50_95_final": (
-                                        float(results.box.map)
-                                        if results.box.map is not None
-                                        else 0.0
-                                    ),
-                                    "val_precision_final": (
-                                        float(results.box.mp)
-                                        if results.box.mp is not None
-                                        else 0.0
-                                    ),
-                                    "val_recall_final": (
-                                        float(results.box.mr)
-                                        if results.box.mr is not None
-                                        else 0.0
-                                    ),
-                                }
-                            )
-                        else:
-                            logger.warning("Training results missing box metrics")
-                            final_metrics_dict.update(
-                                {
-                                    "val_map50_final": 0.0,
-                                    "val_map50_95_final": 0.0,
-                                    "val_precision_final": 0.0,
-                                    "val_recall_final": 0.0,
-                                }
-                            )
+                            # Then log final summary metrics
+                            training_duration = (end_time - start_time).total_seconds()
+                            final_metrics_dict = {
+                                "training_duration_hours": training_duration / 3600
+                            }
 
-                        # Log final metrics to active run
-                        try:
-                            metrics_to_log = final_metrics_dict
-                            active_run.log(metrics_to_log)
-                            logger.info("Final metrics logged to WandB")
-                        except Exception as e:
-                            logger.warning(f"Could not log final metrics: {e}")
+                            if (
+                                results is not None
+                                and hasattr(results, "box")
+                                and results.box is not None
+                            ):
+                                final_metrics_dict.update(
+                                    {
+                                        "val_map50_final": (
+                                            float(results.box.map50)
+                                            if results.box.map50 is not None
+                                            else 0.0
+                                        ),
+                                        "val_map50_95_final": (
+                                            float(results.box.map)
+                                            if results.box.map is not None
+                                            else 0.0
+                                        ),
+                                        "val_precision_final": (
+                                            float(results.box.mp)
+                                            if results.box.mp is not None
+                                            else 0.0
+                                        ),
+                                        "val_recall_final": (
+                                            float(results.box.mr)
+                                            if results.box.mr is not None
+                                            else 0.0
+                                        ),
+                                    }
+                                )
+                            else:
+                                logger.warning("Training results missing box metrics")
+                                final_metrics_dict.update(
+                                    {
+                                        "val_map50_final": 0.0,
+                                        "val_map50_95_final": 0.0,
+                                        "val_precision_final": 0.0,
+                                        "val_recall_final": 0.0,
+                                    }
+                                )
 
-                    # Finish the run
-                    exit_code = 0 if results is not None else 1
-                    active_run.finish(exit_code=exit_code)
-                    logger.info("WandB session finished successfully")
+                            # Log final summary metrics to WandB
+                            try:
+                                # Set as summary metrics (appear in run summary)
+                                for key, value in final_metrics_dict.items():
+                                    current_run.summary[key] = value
+                                logger.info("Final summary metrics logged to WandB")
+                            except Exception as e:
+                                logger.warning(f"Could not log final metrics: {e}")
+
+                    # Finish the run (only if we re-init'd it)
+                    if wandb.run is not None and wandb.run.id == wandb_run_id:
+                        exit_code = 0 if results is not None else 1
+                        wandb.run.finish(exit_code=exit_code)
+                        logger.info("WandB session finished successfully")
+                    else:
+                        logger.info(
+                            "WandB run already finished by Ultralytics, skipping finish"
+                        )
                 else:
                     logger.info(
                         "WandB run already finished (likely by Ultralytics), skipping cleanup"
